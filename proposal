@@ -1,0 +1,13 @@
+I was thinking about the project idea, and here's my idea for the network:
+Essentially: the blockchain is a map of domain names to public keys
+If you want to run a website, you run a "full" node
+if you just want to figure out website's pubkeys, you run a half node that just watches the gossip on the network.
+so, you own a domain name, i.e. google.com.
+In order to keep it, occasionally, you need to answer challenges, to prove you still own the domain.
+a challenge is minted by the network, and will have the format:
+"When you go to https://google.com/challenge.html , display the string "6dcba183f784ba3acdfae14ae2131ac6ee3c144b43a14e1270cad0e68c517bcb". 
+(google announces its public key when it joins the network, this pubkey is verified by the challenge)
+the people who verify that the challenge was completed are other websites (full nodes) e.g. reddit.com, paypal.com, sketchy_random_website.com, ...
+these people are elected by the network, based on some criterion (not sure what???)
+How we test it: On the 406 lab computers 😈
+The ppl that verify the challenge sign google's pubkey, which allows firefox (for example) to use that ca-certificate.
