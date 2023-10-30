@@ -4,6 +4,9 @@ use openssl::x509::X509ReqBuilder;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::x509::X509Req;
+use crate::msg_capnp::ping;
+use capnp::*;
+use capnp::message::Builder;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
@@ -18,7 +21,17 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     let encrypted_len = rsa.public_encrypt(data, &mut buf, Padding::PKCS1).unwrap();
     return buf;
 }
-//todo: include x509 functions for signing+verifying ca certificates w/ RSA private key+pub keys
+
+pub fn create_ping(src: u64, dest: u64) -> Vec<u8> {
+    let mut md = Builder::new_default();
+    let mut b = md.init_root::<msg_capnp::ping::Builder>();
+    b.set_src(src);
+    b.set_dest(dest);
+    b.set_msgid(0);
+    let v = serialize::write_message_to_words(&md);
+    return v;
+
+}
 
 pub mod msg_capnp {
     include!(concat!(env!("OUT_DIR"), "/msg_capnp.rs"));
