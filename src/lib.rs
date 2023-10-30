@@ -43,11 +43,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-    #[test]
     fn x509_demo() {
         let verifier_rsa: Rsa<Private> = generate();
         let verifier_pkey = PKey::from_rsa(verifier_rsa).unwrap();
