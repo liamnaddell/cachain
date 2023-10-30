@@ -30,6 +30,15 @@ pub fn create_ping(src: u64, dest: u64) -> Vec<u8> {
     b.set_msgid(0);
     let v = serialize::write_message_to_words(&md);
     return v;
+}
+pub fn create_pong(src: u64, dest: u64) -> Vec<u8> {
+    let mut md = Builder::new_default();
+    let mut b = md.init_root::<msg_capnp::pong::Builder>();
+    b.set_src(src);
+    b.set_dest(dest);
+    //b.set_msgid(0);
+    let v = serialize::write_message_to_words(&md);
+    return v;
 
 }
 
