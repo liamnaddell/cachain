@@ -8,6 +8,7 @@ const trusted_peers: [&str;1] = ["127.0.0.1:6969"];
 const my_addr: u64 = 10203;
 
 fn main() {
+    let db = load_db("client_db.json");
     for peer in trusted_peers {
         let mut addrs = peer.to_socket_addrs().unwrap();
         let mut socket = addrs.next().unwrap();
