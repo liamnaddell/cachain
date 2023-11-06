@@ -1,17 +1,16 @@
 use openssl::rsa::{Rsa,Padding};
 use openssl::pkey::Private;
-use openssl::x509::X509ReqBuilder;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
-use openssl::x509::X509Req;
 use crate::msg_capnp::ping;
 use capnp::*;
 use capnp::message::Builder;
 use serde::{Deserialize,Serialize};
 use std::fs;
+use openssl::pkey::Public;
 
 #[derive(Serialize, Deserialize,Clone)]
-struct ChainEntry {
+pub struct ChainEntry {
     url: String,
     website_pubkey: String,
     verifer_signature: String,
@@ -20,14 +19,13 @@ struct ChainEntry {
 }
 
 pub struct DB {
-    chain: Vec<ChainEntry>,
-    pkey: Rsa<Private>,
+    pub chain: Vec<ChainEntry>,
+    pub pkey: Rsa<Private>,
 }
 
 impl DB {
     fn to_disk_db(&self) -> DiskDB {
-        let to_encode = PKey::from_rsa(self.pkey.clone()).unwrap();
-        let v = to_encode.private_key_to_pkcs8().unwrap();
+        let v = serialize_privkey(&self.pkey);
         return DiskDB { chain: self.chain.clone(), pkey:v};
     }
     fn from_disk_db(ddb: DiskDB) -> DB {
@@ -44,6 +42,23 @@ impl DB {
     }
 }
 
+pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
+    let to_encode = PKey::from_rsa(key.clone()).unwrap();
+    let v = to_encode.public_key_to_pem().unwrap();
+    return v;
+}
+
+pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
+    let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
+    return to_encode;
+}
+
+pub fn serialize_privkey(key: &Rsa<Private>) -> Vec<u8> {
+    let to_encode = PKey::from_rsa(key.clone()).unwrap();
+    let v = to_encode.private_key_to_pkcs8().unwrap();
+    return v;
+}
+
 #[derive(Serialize, Deserialize)]
 struct DiskDB {
     chain: Vec<ChainEntry>,
@@ -57,7 +72,7 @@ pub fn load_db(file: &str) -> DB {
         println!("Creating new db");
         let db = DB::new();
         let ddb = db.to_disk_db();
-        fs::write(file,&serde_json::to_string(&ddb).unwrap());
+        fs::write(file,&serde_json::to_string(&ddb).unwrap()).unwrap();
         return db;
     } else {
         let data = fs::read_to_string(file).unwrap();
@@ -66,14 +81,11 @@ pub fn load_db(file: &str) -> DB {
     }
 }
 
-
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
 pub fn generate() -> Rsa<Private> {
     let rsa = Rsa::generate(2048).unwrap();
     return rsa;
 }
+
 pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     let mut buf = vec![0; rsa.size() as usize];
     let data = b"foobar";
@@ -81,20 +93,36 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return buf;
 }
 
-pub fn create_ping(src: u64, dest: u64) -> Vec<u8> {
+pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
     let mut md = Builder::new_default();
-    let mut b = md.init_root::<msg_capnp::ping::Builder>();
+    let mut b = md.init_root::<msg_capnp::update::Builder>();
     b.set_src(src);
     b.set_dest(dest);
+    b.set_start_msgid(start_msgid);
+    b.set_end_msgid(end_msgid);
     let v = serialize::write_message_to_words(&md);
     return v;
 }
 
-pub fn create_pong(src: u64, dest: u64) -> Vec<u8> {
+pub fn create_ping(src: u64, dest: u64,key: &Rsa<Private>) -> Vec<u8> {
     let mut md = Builder::new_default();
-    let mut b = md.init_root::<msg_capnp::pong::Builder>();
+    let mut b = md.init_root::<msg_capnp::ping::Builder>();
     b.set_src(src);
     b.set_dest(dest);
+//    b.set_key(key);
+    let v = serialize::write_message_to_words(&md);
+    return v;
+}
+
+pub fn create_pong(src: u64, dest: u64,key: &Rsa<Private>, peers: Vec<String>) -> Vec<u8> {
+    let mut md = Builder::new_default();
+    let mut b = md.init_root::<msg_capnp::pong::Builder>();
+    let keydata = serialize_pubkey(key);
+    let mut b2 = Builder::new_default().init_root::<msg_capnp::pong::Builder>().init_key(keydata.len() as u32);
+    b.set_src(src);
+    b.set_dest(dest);
+    //b.set_peers(peers);
+    b.set_key(capnp::text::Reader::from(keydata.as_slice()));
     let v = serialize::write_message_to_words(&md);
     return v;
 }

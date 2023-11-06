@@ -14,6 +14,7 @@ struct Msg {
 struct Ping {
     src @0 :UInt64;
     dest @1 :UInt64;
+    key @2 :Text;
 }
 
 struct Pong {
@@ -22,7 +23,7 @@ struct Pong {
     #the pubkey of the pinged node
     key @2 :Text;
     #A list of peers
-    peers @3 :List(UInt64);
+    peers @3 :List(Text);
 
 }
 
