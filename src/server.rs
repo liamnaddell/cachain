@@ -21,6 +21,9 @@ fn main() -> Result<(),Box<dyn Error>> {
         println!("Received ping: {:?}",ping);
         let pong = create_pong(ADDR,ping.get_src(),&key,peers.clone());
         stream.write(&pong)?;
+        let update = reader.get_root::<msg_capnp::update::Reader>()?;
+        let update_r = create_update_response(ADDR,ping.get_src(),vec!());
+        stream.write(&update_r)?;
     }
     return Ok(());
 }

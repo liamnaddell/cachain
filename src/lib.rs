@@ -104,6 +104,20 @@ pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec
     return v;
 }
 
+pub fn create_update_response(src: u64, dest:u64, chain: Vec<ChainEntry>) -> Vec<u8> {
+    let mut md = Builder::new_default();
+    let mut b = md.init_root::<msg_capnp::update_response::Builder>();
+    let mut md2 = Builder::new_default();
+    let mut root2 = md2.init_root::<msg_capnp::update_response::Builder>();
+    let mut b2 = root2.init_bchain(chain.len() as u32);
+    b.set_src(src);
+    b.set_src(dest);
+    b.set_bchain(b2.into_reader());
+
+    let v = serialize::write_message_to_words(&md);
+    return v;
+}
+
 pub fn create_ping(src: u64, dest: u64,key: &Rsa<Private>) -> Vec<u8> {
     let mut md = Builder::new_default();
     let mut b = md.init_root::<msg_capnp::ping::Builder>();

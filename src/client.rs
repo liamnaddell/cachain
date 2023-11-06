@@ -20,14 +20,18 @@ fn main() -> Result<(),Box<dyn Error>> {
 
         stream.write(&ping)?;
 
-        let reader = serialize::read_message(stream,capnp::message::ReaderOptions::new()).unwrap();
+        let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
 
+        //TODO: add pong info to running list of peers
         let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
-
-        deserialize_pubkey(pong.get_key()?.to_string()?);
         println!("{:?}",pong);
+        deserialize_pubkey(pong.get_key()?.to_string()?);
 
-        //wait for pong
+        let update = create_update(MY_ADDR,pong.get_src(),0,0);
+
+        stream.write(&update)?;
+        let update_response = reader.get_root::<msg_capnp::update_response::Reader>()?;
+        println!("{:?}", update_response);
     }
     return Ok(());
 }
