@@ -4,10 +4,12 @@ struct Msg {
     enum Type {
         ping @0;
         pong @1;
+        update @2;
     }
     contents :union {
         ping @0 :Ping;
         pong @1 :Pong;
+        update @2 :Update;
     }
 }
 

@@ -16,9 +16,10 @@ fn main() -> Result<(),Box<dyn Error>> {
         println!("Connecting to peer {} with ip {:?}",peer,socket);
         let mut stream = TcpStream::connect(socket).unwrap();
         //send ping
-        let ping = create_ping(MY_ADDR,0,&db.pkey);
+        let ping = Ping {src:MY_ADDR,dest:0,key:private_to_public(&db.pkey)};
+        let msg_ping = ping.to_msg()?;
 
-        stream.write(&ping)?;
+        stream.write(&msg_ping)?;
 
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
 
@@ -27,10 +28,12 @@ fn main() -> Result<(),Box<dyn Error>> {
         println!("{:?}",pong);
         deserialize_pubkey(pong.get_key()?.to_string()?);
 
-        let update = create_update(MY_ADDR,pong.get_src(),0,0);
+        let update = Update {src:MY_ADDR,dest:pong.get_src(),start_msgid:0,end_msgid:0};
+        let msg_update = update.to_capnp()?;
 
-        stream.write(&update)?;
-        let update_response = reader.get_root::<msg_capnp::update_response::Reader>()?;
+        stream.write(&msg_update)?;
+        let reader2 = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
+        let update_response = reader2.get_root::<msg_capnp::update_response::Reader>()?;
         println!("{:?}", update_response);
     }
     return Ok(());
