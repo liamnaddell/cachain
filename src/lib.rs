@@ -12,6 +12,8 @@ use core::result::Result;
 
 mod ecs;
 
+mod chain;
+
 #[derive(Serialize, Deserialize,Clone)]
 pub struct ChainEntry {
     pub url: String,
