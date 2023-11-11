@@ -1,17 +1,14 @@
 use openssl::rsa::{Rsa,Padding};
-use openssl::pkey::Private;
-use openssl::pkey::PKey;
+use openssl::pkey::{PKey,Public,Private};
 use crate::msg_capnp::*;
 use capnp::*;
 use capnp::message::Builder;
 use serde::{Deserialize,Serialize};
-use std::fs;
-use openssl::pkey::Public;
 use std::error::Error;
 use core::result::Result;
 
-mod ecs;
-
+pub mod peers;
+pub mod db;
 pub mod chain;
 
 #[derive(Debug)]
@@ -88,8 +85,8 @@ impl Update {
     }
     pub fn to_capnp(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut message = Builder::new_default();
-        let mut msg_builder = message.init_root::<msg_capnp::msg::Builder>();
-        let mut c_b = msg_builder.init_contents();
+        let msg_builder = message.init_root::<msg_capnp::msg::Builder>();
+        let c_b = msg_builder.init_contents();
         let mut b = c_b.init_update();
         b.set_src(self.src);
         b.set_dest(self.dest);
@@ -103,30 +100,6 @@ impl Update {
     }
 }
 
-
-pub struct DB {
-    pub chain: Vec<chain::ChainEntry>,
-    pub pkey: Rsa<Private>,
-}
-
-impl DB {
-    fn to_disk_db(&self) -> DiskDB {
-        let v = serialize_privkey(&self.pkey);
-        return DiskDB { chain: self.chain.clone(), pkey:v};
-    }
-    fn from_disk_db(ddb: DiskDB) -> DB {
-        let keydata = ddb.pkey;
-        let pkey = PKey::private_key_from_pkcs8(&keydata).unwrap();
-        let rsa = pkey.rsa().unwrap();
-        return DB { chain: ddb.chain, pkey: rsa};
-
-    }
-    fn new() -> DB {
-        let v = vec!();
-        let pkey = generate();
-        return DB { chain: v, pkey: pkey};
-    }
-}
 
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
@@ -155,28 +128,6 @@ pub fn serialize_privkey(key: &Rsa<Private>) -> Vec<u8> {
 pub fn private_to_public(key: &Rsa<Private>) -> Rsa<Public> {
     let pubkey = Rsa::from_public_components(key.n().to_owned().unwrap(),key.e().to_owned().unwrap()).unwrap();
     return pubkey;
-}
-
-#[derive(Serialize, Deserialize)]
-struct DiskDB {
-    chain: Vec<chain::ChainEntry>,
-    pkey: Vec<u8>,
-}
-
-use std::path::Path;
-//creates DB if it doesn't exist
-pub fn load_db(file: &str) -> DB {
-    if ! Path::new(&file).exists() {
-        println!("Creating new db");
-        let db = DB::new();
-        let ddb = db.to_disk_db();
-        fs::write(file,&serde_json::to_string(&ddb).unwrap()).unwrap();
-        return db;
-    } else {
-        let data = fs::read_to_string(file).unwrap();
-        let ddb: DiskDB = serde_json::from_str(&data).unwrap();
-        return DB::from_disk_db(ddb);
-    }
 }
 
 pub fn generate() -> Rsa<Private> {
