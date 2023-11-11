@@ -1,18 +1,42 @@
 use openssl::rsa::{Rsa,Padding};
-use openssl::pkey::Private;
-use openssl::pkey::PKey;
+use openssl::pkey::{PKey,Public,Private};
 use crate::msg_capnp::*;
 use capnp::*;
 use capnp::message::Builder;
 use serde::{Deserialize,Serialize};
 use std::fs;
-use openssl::pkey::Public;
 use std::error::Error;
 use core::result::Result;
 
-mod ecs;
 
 pub mod chain;
+pub mod ecs;
+pub mod peers;
+#[derive(Serialize, Deserialize,Clone)]
+pub struct ChainEntry {
+    pub url: String,
+    pub website_pubkey: String,
+    pub verifier_signature: String,
+    pub msgid: u64,
+    pub msg_signature: String,
+}
+
+impl ChainEntry {
+    pub fn to_builder(&self) ->  capnp::message::Builder<capnp::message::HeapAllocator> {
+        let mut mb = Builder::new_default();
+
+        let mut ce = mb.init_root::<msg_capnp::chain_entry::Builder>();
+
+        ce.set_url(text::Reader::from(self.url.as_str()));
+        ce.set_verifier_sig(text::Reader::from(self.verifier_signature.as_str()));
+        ce.set_msgid(self.msgid);
+        ce.set_msg_sig(text::Reader::from(self.msg_signature.as_str()));
+        return mb;
+        
+
+    }
+
+}
 
 #[derive(Debug)]
 pub struct Ping {
@@ -88,8 +112,8 @@ impl Update {
     }
     pub fn to_capnp(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut message = Builder::new_default();
-        let mut msg_builder = message.init_root::<msg_capnp::msg::Builder>();
-        let mut c_b = msg_builder.init_contents();
+        let msg_builder = message.init_root::<msg_capnp::msg::Builder>();
+        let c_b = msg_builder.init_contents();
         let mut b = c_b.init_update();
         b.set_src(self.src);
         b.set_dest(self.dest);

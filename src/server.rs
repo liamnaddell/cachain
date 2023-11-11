@@ -8,14 +8,10 @@ use std::net::TcpStream;
 
 mod ecs;
 
-//use cachain::Pong;
-
-
-//const TRUSTED_PEERS: [&str;1] = ["localhost:6969"];
 const ADDR: u64 = 0xdeadbeef;
 
 fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
-    while(true) {
+    loop {
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new())?;
         let msg_reader = reader.get_root::<msg_capnp::msg::Reader>()?;
         let contents = msg_reader.get_contents();
@@ -43,7 +39,6 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             }
         };
     }
-    return Ok(());
 
 }
 
