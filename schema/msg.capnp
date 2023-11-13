@@ -46,10 +46,16 @@ struct UpdateResponse {
 }
 
 struct ChainEntry {
-    url @0: Text;
-    verifierSig @1: Text;
-    msgid @2: UInt64;
-    msgSig @3: Text;
+    hash @0 :Text;
+    prevHash @1 :Text;
+    height @2 :UInt64;
+    signedTime @3 :Int64;
+    verifierSig @4 :Text;
+    reqHash @5 :Text;
+    url @6 :Text;
+    reqPubkey @7 :Text;
+    reqTime @8 :Int64;
+    msgSig @9 :Text;
 }
 
 #todo: Add Update response, depends on knowing what a block looks like
