@@ -12,31 +12,7 @@ use core::result::Result;
 
 mod ecs;
 
-#[derive(Serialize, Deserialize,Clone)]
-pub struct ChainEntry {
-    pub url: String,
-    pub website_pubkey: String,
-    pub verifier_signature: String,
-    pub msgid: u64,
-    pub msg_signature: String,
-}
-
-impl ChainEntry {
-    pub fn to_builder(&self) ->  capnp::message::Builder<capnp::message::HeapAllocator> {
-        let mut mb = Builder::new_default();
-
-        let mut ce = mb.init_root::<msg_capnp::chain_entry::Builder>();
-
-        ce.set_url(text::Reader::from(self.url.as_str()));
-        ce.set_verifier_sig(text::Reader::from(self.verifier_signature.as_str()));
-        ce.set_msgid(self.msgid);
-        ce.set_msg_sig(text::Reader::from(self.msg_signature.as_str()));
-        return mb;
-        
-
-    }
-
-}
+pub mod chain;
 
 #[derive(Debug)]
 pub struct Ping {
@@ -129,7 +105,7 @@ impl Update {
 
 
 pub struct DB {
-    pub chain: Vec<ChainEntry>,
+    pub chain: Vec<chain::ChainEntry>,
     pub pkey: Rsa<Private>,
 }
 
@@ -183,7 +159,7 @@ pub fn private_to_public(key: &Rsa<Private>) -> Rsa<Public> {
 
 #[derive(Serialize, Deserialize)]
 struct DiskDB {
-    chain: Vec<ChainEntry>,
+    chain: Vec<chain::ChainEntry>,
     pkey: Vec<u8>,
 }
 
@@ -226,7 +202,7 @@ pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec
     return v;
 }
 
-pub fn create_update_response(src: u64, dest:u64, chain: Vec<ChainEntry>) -> Vec<u8> {
+pub fn create_update_response(src: u64, dest:u64, chain: Vec<chain::ChainEntry>) -> Vec<u8> {
     let mut message = Builder::new_default();
     let mut ur = message.init_root::<msg_capnp::update_response::Builder>();
     let mut b2 = ur.reborrow().init_bchain(chain.len() as u32);

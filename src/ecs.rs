@@ -1,18 +1,25 @@
 use crate::*;
+use crate::chain::{CertRequest, ChainEntry};
 use std::sync::{RwLock,RwLockReadGuard};
 
 pub fn init_ecs() -> Result<(), Box<dyn Error>> {
     let pkey = generate();
     let wskey = String::from_utf8(serialize_pubkey(&generate()))?;
     let vsig = "not a real signature lol".to_string();
-    let c1 = ChainEntry {
-        url: "a.com".to_string(),
-        website_pubkey: wskey,
-        verifier_signature: vsig.clone(),
-        msgid: 0,
-        msg_signature: vsig,
-    };
-    let db = DB { chain: vec!(c1), pkey: pkey };
+    let r0 = CertRequest::new(
+        "a.com".to_string(),
+        wskey.clone(),
+        0,
+    );
+    let c0 = ChainEntry::new(
+        "".to_string(),
+        0,
+        0,
+        wskey,
+        vsig,
+        r0,
+    );
+    let db = DB { chain: vec!(c0), pkey: pkey };
     //ew
     unsafe {
         let rwhandle = Box::new(RwLock::new(ECS {db}));
