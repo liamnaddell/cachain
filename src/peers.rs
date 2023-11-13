@@ -52,8 +52,8 @@ impl Peers {
         }
         return Ok(i);
     }
-    //TODO: Make this guy reach out to some peers
-    pub fn new(peerno: usize) -> Self {
+    pub fn new(peer&str,peerno: usize) -> Self {
+        //TODO: send ping, etc here
         return Peers{peers:vec!(),peerno:peerno};
     }
 }

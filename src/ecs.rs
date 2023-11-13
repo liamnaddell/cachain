@@ -2,8 +2,7 @@ use crate::*;
 use crate::chain::{CertRequest, ChainEntry};
 use std::sync::{RwLock,RwLockReadGuard};
 
-
-pub fn init_ecs() -> Result<(), Box<dyn Error>> {
+pub fn init_ecs(peer: &str, peerno: usize) -> Result<(), Box<dyn Error>> {
     let pkey = generate();
     let wskey = String::from_utf8(serialize_pubkey(&generate()))?;
     let vsig = "not a real signature lol".to_string();
@@ -15,7 +14,7 @@ pub fn init_ecs() -> Result<(), Box<dyn Error>> {
         msg_signature: vsig,
     };
     let db = DB { chain: vec!(c1), pkey: pkey };
-    let peers = peers::Peers::new(0);
+    let peers = peers::Peers::new(peer,1);
     //ew
     unsafe {
         let rwhandle = Box::new(RwLock::new(ECS {db,peers}));

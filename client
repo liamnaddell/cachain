@@ -1,1 +1,1 @@
-cargo run --bin client $@
+./target/debug/client $@

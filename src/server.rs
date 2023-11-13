@@ -43,8 +43,15 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
 }
 
 fn main() -> Result<(),Box<dyn Error>> {
-    ecs::init_ecs()?;
-    let listener = TcpListener::bind("127.0.0.1:6969".parse::<SocketAddr>().unwrap()).unwrap();
+    let (peer,peerno) = {
+        if args.len() == 1 {
+            ("127.0.0.1:8069",0)
+        } else {
+            (&args[1],1)
+        }
+    };
+    ecs::init_ecs(peer,peerno)?;
+    let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;
         println!("Received connection");
