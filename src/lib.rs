@@ -32,8 +32,6 @@ impl ChainEntry {
         ce.set_msgid(self.msgid);
         ce.set_msg_sig(text::Reader::from(self.msg_signature.as_str()));
         return mb;
-        
-
     }
 
 }

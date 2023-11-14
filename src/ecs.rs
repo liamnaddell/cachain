@@ -14,10 +14,10 @@ pub fn init_ecs(peer: &str, peerno: usize) -> Result<(), Box<dyn Error>> {
         msg_signature: vsig,
     };
     let db = DB { chain: vec!(c1), pkey: pkey };
-    let peers = peers::Peers::new(peer,1);
+    let peers = peers::Peers::new(peer,peerno);
     //ew
     unsafe {
-        let rwhandle = Box::new(RwLock::new(ECS {db,peers}));
+        let rwhandle = Box::new(RwLock::new(ECS {db,peers,addr:0xdeadbeef}));
         ECS=Some(rwhandle);
     }
     return Ok(());
@@ -37,6 +37,7 @@ pub fn ecs_read() -> Result<RwLockReadGuard<'static, ECS>, Box<dyn Error>> {
 //singleton design pattern, stores threadsafe references to the database, etc
 pub struct ECS {
     pub db: DB,
+    pub addr: u64,
     pub peers: peers::Peers,
 }
 

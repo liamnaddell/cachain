@@ -5,6 +5,7 @@ use capnp::serialize;
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
+use std::env;
 
 mod ecs;
 
@@ -44,13 +45,14 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
 
 fn main() -> Result<(),Box<dyn Error>> {
     let (peer,peerno) = {
+        let args:Vec<String> = env::args().collect();
         if args.len() == 1 {
-            ("127.0.0.1:8069",0)
+            ("127.0.0.1:8069".to_string(),0)
         } else {
-            (&args[1],1)
+            (args[1].to_string(),1)
         }
     };
-    ecs::init_ecs(peer,peerno)?;
+    ecs::init_ecs(peer.as_str(),peerno)?;
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;

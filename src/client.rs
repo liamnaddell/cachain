@@ -9,7 +9,7 @@ const MY_ADDR: u64 = 10203;
 
 fn main() -> Result<(),Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
-    let mut peer = {
+    let peer = {
         if args.len() == 1 {
             "127.0.0.1:8069"
         } else {
