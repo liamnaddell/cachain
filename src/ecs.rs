@@ -2,7 +2,7 @@ use crate::*;
 use crate::chain::{CertRequest, ChainEntry};
 use std::sync::{RwLock,RwLockReadGuard};
 
-pub fn init_ecs(peer: &str, peerno: usize) -> Result<(), Box<dyn Error>> {
+/*pub fn init_ecs() -> Result<(), Box<dyn Error>> {
     let pkey = generate();
     let wskey = String::from_utf8(serialize_pubkey(&generate()))?;
     let vsig = "not a real signature lol".to_string();
@@ -14,10 +14,9 @@ pub fn init_ecs(peer: &str, peerno: usize) -> Result<(), Box<dyn Error>> {
         msg_signature: vsig,
     };
     let db = DB { chain: vec!(c1), pkey: pkey };
-    let peers = peers::Peers::new(peer,peerno);
     //ew
     unsafe {
-        let rwhandle = Box::new(RwLock::new(ECS {db,peers,addr:0xdeadbeef}));
+        let rwhandle = Box::new(RwLock::new(ECS {db,addr:0xdeadbeef}));
         ECS=Some(rwhandle);
     }
     return Ok(());
@@ -32,14 +31,24 @@ pub fn ecs_read() -> Result<RwLockReadGuard<'static, ECS>, Box<dyn Error>> {
             panic!("ecs read w/o initialization");
         }
     }
-
+}
+pub fn ecs_write() -> Result<RwLockWriteGuard<'static, ECS>, Box<dyn Error>> {
+    unsafe {
+        if let Some(r) = &ECS {
+            let option = r;
+            let handle = option.write()?;
+            return Ok(handle);
+        } else {
+            panic!("ecs write w/o initialization");
+        }
+    }
 }
 //singleton design pattern, stores threadsafe references to the database, etc
 pub struct ECS {
     pub db: DB,
     pub addr: u64,
-    pub peers: peers::Peers,
 }
 
 //TODO: de-unsafe this api, I still think it's possible to do
 static mut ECS: Option<Box<RwLock<ECS>>> = None;
+*/

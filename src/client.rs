@@ -16,7 +16,7 @@ fn main() -> Result<(),Box<dyn Error>> {
             &args[1]
         }
     };
-    let db = load_db("client_db.json");
+    db::load_db("client_db.json");
     println!("{}",peer);
     let mut addrs = peer.to_socket_addrs().unwrap();
     let mut socket = addrs.next().unwrap();
@@ -24,7 +24,7 @@ fn main() -> Result<(),Box<dyn Error>> {
     println!("Connecting to peer {} with ip {:?}",peer,socket);
     let mut stream = TcpStream::connect(socket).unwrap();
     //send ping
-    let ping = Ping {src:MY_ADDR,dest:0,key:private_to_public(&db.pkey)};
+    let ping = Ping {src:MY_ADDR,dest:0,key:private_to_public(&db::get_key())};
     let msg_ping = ping.to_msg()?;
 
     stream.write(&msg_ping)?;

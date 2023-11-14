@@ -8,6 +8,10 @@ use std::collections::HashSet;
 use std::net::ToSocketAddrs;
 use crate::*;
 use crate::ecs::*;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+
 
 pub struct Peer {
     pub url: String,
@@ -48,6 +52,29 @@ pub struct Peers {
     potential_peers: HashSet<String>,
     peerno: usize,
 }
+lazy_static! {
+//static ref peer_instance: Mutex<Option<Peers>> = Mutex::new(RefCell::new(None));
+static ref PEER_INS: Mutex<Option<Peers>> = Mutex::new(None);
+}
+
+use std::ops::DerefMut;
+
+pub fn broadcast(msg: Vec<u8>, blacklist: u64) -> Result<usize,Box<dyn Error>> {
+    let mut guard = PEER_INS.lock()?;
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    peers.broadcast(msg,blacklist)
+}
+
+pub fn init(peer: &str,peerno: usize) {
+    {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut();
+    let mut peers = Peers::new(peer,peerno);
+    peers.generate().unwrap();
+    *option_peer = Some(peers);
+    }
+}
 
 impl Peers {
     //TODO: Guarantee messages are sent to at least one peer and generate peers if there are none
@@ -67,7 +94,8 @@ impl Peers {
         //TODO: send ping, etc here
         let mut hs = HashSet::new();
         hs.insert(peer.to_string());
-        return Peers{peers:vec!(),potential_peers:hs,peerno:peerno};
+        let peers  = Peers{peers:vec!(),potential_peers:hs,peerno:peerno};
+        return peers;
     }
     pub fn generate(&mut self) -> Result<usize,Box<dyn Error>> {
         for i in 0..self.peerno {
@@ -82,13 +110,15 @@ impl Peers {
             let mut socket = addrs.next().ok_or("WTF lol")?;
             socket.set_port(8069);
             let mut stream = TcpStream::connect(socket)?;
-            let ping = {
+            /*let ping = {
                 let ecs = ecs_read()?;
                 Ping {src:ecs.addr,dest:0,key:private_to_public(&ecs.db.pkey)}
             };
             let msg_ping = ping.to_msg()?;
 
             stream.write(&msg_ping)?;
+            */
+            unimplemented!();
             let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
             let pong_msg = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
             let pong = Pong::from_reader(pong_msg)?;

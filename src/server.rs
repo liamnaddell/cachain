@@ -7,8 +7,6 @@ use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
 use std::env;
 
-mod ecs;
-
 const ADDR: u64 = 0xdeadbeef;
 
 fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
@@ -16,10 +14,7 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new())?;
         let msg_reader = reader.get_root::<msg_capnp::msg::Reader>()?;
         let contents = msg_reader.get_contents();
-        let key = {
-            let e = ecs::ecs_read()?;
-            e.db.pkey.clone()
-        };
+        let key = db::get_key();
         match contents.which()? {
             contents::Ping(ping_reader) => {
                 let ping = Ping::from_reader(ping_reader?)?;
@@ -31,8 +26,7 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             contents::Update(update_reader) => {
                 let update = Update::from_reader(update_reader?)?;
                 println!("Received update: {:?}",update);
-                let echandle = ecs::ecs_read()?;
-                let update_r = create_update_response(ADDR,update.src,echandle.db.chain.clone());
+                let update_r = create_update_response(ADDR,update.src,db::get_chain());
                 stream.write(&update_r)?;
             }
             _ => {
@@ -52,7 +46,8 @@ fn main() -> Result<(),Box<dyn Error>> {
             (args[1].to_string(),1)
         }
     };
-    ecs::init_ecs(peer.as_str(),peerno)?;
+    println!("Initializing peer list with {}",peer);
+    peers::init(peer.as_str(),peerno);
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;
