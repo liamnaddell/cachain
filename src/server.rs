@@ -47,6 +47,7 @@ fn main() -> Result<(),Box<dyn Error>> {
         }
     };
     println!("Initializing peer list with {}",peer);
+    db::load_db("server_db.json");
     peers::init(peer.as_str(),peerno);
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {

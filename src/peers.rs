@@ -11,8 +11,6 @@ use crate::ecs::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 
-
-
 pub struct Peer {
     pub url: String,
     pub pub_key: Rsa<Public>,
@@ -110,18 +108,16 @@ impl Peers {
             let mut socket = addrs.next().ok_or("WTF lol")?;
             socket.set_port(8069);
             let mut stream = TcpStream::connect(socket)?;
-            /*let ping = {
-                let ecs = ecs_read()?;
-                Ping {src:ecs.addr,dest:0,key:private_to_public(&ecs.db.pkey)}
+            let ping = {
+                Ping {src:db::get_addr(),dest:0,key:private_to_public(&db::get_key())}
             };
             let msg_ping = ping.to_msg()?;
 
             stream.write(&msg_ping)?;
-            */
-            unimplemented!();
             let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
             let pong_msg = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
             let pong = Pong::from_reader(pong_msg)?;
+            println!("[peers] Entered peership with {}",&url);
             let peer = Peer::from_pong(url,&pong);
             self.peers.push(peer);
             for pong_peer in pong.peers.iter() {

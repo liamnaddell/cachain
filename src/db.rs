@@ -20,13 +20,15 @@ static ref DB_I: Mutex<Option<DB>> = Mutex::new(None);
 pub struct DB {
     pub chain: Vec<ChainEntry>,
     pub pkey: Rsa<Private>,
+    pub addr: u64,
 }
 
+use rand::random;
 impl DB {
     fn new() -> DB {
         let v = vec!();
         let pkey = generate();
-        return DB { chain: v, pkey: pkey};
+        return DB { chain: v, pkey: pkey, addr:random()};
     }
 }
 
@@ -34,7 +36,7 @@ fn to_disk_db() -> DiskDB {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     let v = serialize_privkey(&db.pkey);
-    return DiskDB { chain: db.chain.clone(), pkey:v};
+    return DiskDB { chain: db.chain.clone(), pkey:v,addr:db.addr};
 }
 fn from_disk_db(ddb: DiskDB) {
     let keydata = ddb.pkey;
@@ -42,7 +44,7 @@ fn from_disk_db(ddb: DiskDB) {
     let rsa = pkey.rsa().unwrap();
     let mut guard = DB_I.lock().unwrap();
     let option_db = guard.deref_mut();
-    let db = DB { chain: ddb.chain, pkey: rsa};
+    let db = DB { chain: ddb.chain, pkey: rsa,addr:ddb.addr};
     *option_db=Some(db);
 }
 
@@ -50,6 +52,7 @@ fn from_disk_db(ddb: DiskDB) {
 struct DiskDB {
     chain: Vec<ChainEntry>,
     pkey: Vec<u8>,
+    addr:u64,
 }
 
 use std::path::Path;
@@ -82,6 +85,13 @@ pub fn get_chain() -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     return db.chain.clone();
+}
+
+//TODO: This is also stupid, put this data in read-only structure somewhere else with no mutex
+pub fn get_addr() -> u64 {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.addr;
 }
 
 
