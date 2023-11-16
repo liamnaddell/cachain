@@ -5,37 +5,30 @@ use capnp::serialize;
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
+use std::env;
 
-mod ecs;
-
-//use cachain::Pong;
-
-
-//const TRUSTED_PEERS: [&str;1] = ["localhost:6969"];
 const ADDR: u64 = 0xdeadbeef;
 
 fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
-    while(true) {
+    loop {
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new())?;
         let msg_reader = reader.get_root::<msg_capnp::msg::Reader>()?;
         let contents = msg_reader.get_contents();
-        let key = {
-            let e = ecs::ecs_read()?;
-            e.db.pkey.clone()
-        };
+        let key = db::get_key();
         match contents.which()? {
             contents::Ping(ping_reader) => {
                 let ping = Ping::from_reader(ping_reader?)?;
-                let peers = vec![String::from("a.com"),String::from("b.com")];
-                let pong = create_pong(ADDR,ping.src,&key,peers.clone());
+                let ip = stream.peer_addr()?.to_string();
+                peers::add_potential(&ip);
+                let peers = peers::peer_urls();
+                let pong = create_pong(ADDR,ping.src,&key,peers);
                 stream.write(&pong)?;
                 println!("Received ping: {:?}",ping);
             }
             contents::Update(update_reader) => {
                 let update = Update::from_reader(update_reader?)?;
                 println!("Received update: {:?}",update);
-                let echandle = ecs::ecs_read()?;
-                let update_r = create_update_response(ADDR,update.src,echandle.db.chain.clone());
+                let update_r = create_update_response(ADDR,update.src,db::get_chain());
                 stream.write(&update_r)?;
             }
             _ => {
@@ -43,13 +36,23 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             }
         };
     }
-    return Ok(());
 
 }
 
 fn main() -> Result<(),Box<dyn Error>> {
-    ecs::init_ecs()?;
-    let listener = TcpListener::bind("127.0.0.1:6969".parse::<SocketAddr>().unwrap()).unwrap();
+    let (peer,peerno) = {
+        let args:Vec<String> = env::args().collect();
+        if args.len() == 1 {
+            (None,0)
+        } else {
+            let arg = args[1].to_string()+":8069";
+            println!("Initializing peer list with {}",arg);
+            (Some(arg),5)
+        }
+    };
+    db::load_db("server_db.json");
+    peers::init(peer,peerno);
+    let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;
         println!("Received connection");
