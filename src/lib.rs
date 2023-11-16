@@ -68,6 +68,113 @@ impl Pong {
     }
 }
 
+
+#[derive(Debug)]
+pub enum AdvertKind {
+    CR(String),      // Cert Request hash
+    CE(String),      // Chain Entry hash
+}
+
+#[derive(Debug)]
+pub struct Advert {
+    pub src: u64,
+    pub dest: u64,
+    pub kind: AdvertKind,
+}
+impl Advert {
+    pub fn from_reader(p: advert::Reader) -> Result<Self, Box<dyn Error>> {
+        let src = p.get_src();
+        let dest = p.get_dest();
+        let kind: AdvertKind = match p.get_kind().which()? {
+            advert::kind::Cr(cr) => AdvertKind::CR(cr?.to_string()?),
+            advert::kind::Ce(ce) => AdvertKind::CE(ce?.to_string()?),
+        };
+        return Ok(Advert { src, dest, kind });
+    }
+
+    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut msg_default = Builder::new_default();
+        let msg_builder = msg_default.init_root::<msg_capnp::msg::Builder>();
+        let c_builder = msg_builder.init_contents();
+        let mut ad_builder = c_builder.init_advert();
+        ad_builder.set_src(self.src);
+        ad_builder.set_dest(self.dest);
+        let mut kind_builder = ad_builder.init_kind();
+        match &self.kind {
+            AdvertKind::CR(cr) => {
+                kind_builder.set_cr(text::Reader::from(cr.as_str()));
+            }
+            AdvertKind::CE(ce) => {
+                kind_builder.set_ce(text::Reader::from(ce.as_str()));
+            }
+        };
+
+        let v = serialize::write_message_to_words(&msg_default);
+        return Ok(v);
+    }
+}
+
+
+#[derive(Debug)]
+pub struct GetRequest {
+    pub src: u64,
+    pub dest: u64,
+    pub req_hash: String,
+}
+impl GetRequest {
+    pub fn from_reader(p: get_request::Reader) -> Result<Self, Box<dyn Error>> {
+        let src = p.get_src();
+        let dest = p.get_dest();
+        let req_hash = p.get_req_hash()?.to_string()?;
+        return Ok(GetRequest { src, dest, req_hash });
+    }
+
+    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut msg_default = Builder::new_default();
+        let msg_builder = msg_default.init_root::<msg_capnp::msg::Builder>();
+        let c_builder = msg_builder.init_contents();
+        let mut gr_builder = c_builder.init_get_request();
+        gr_builder.set_src(self.src);
+        gr_builder.set_dest(self.dest);
+        gr_builder.set_req_hash(text::Reader::from(self.req_hash.as_str()));
+
+        let v = serialize::write_message_to_words(&msg_default);
+        return Ok(v);
+    }
+}
+
+pub struct RequestData {
+    pub src: u64,
+    pub dest: u64,
+    pub req_data: chain::CertRequest,
+}
+impl RequestData {
+    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut default = Builder::new_default();
+        let msg_builder = default.init_root::<msg_capnp::msg::Builder>();
+        let c_builder = msg_builder.init_contents();
+        let mut rd_builder = c_builder.init_request_data();
+        
+        rd_builder.set_src(self.src);
+        rd_builder.set_dest(self.dest);
+        
+        let mut req_builder = self.req_data.to_builder();
+        let req_root_builder = req_builder.get_root::<cert_request::Builder>().unwrap();
+        rd_builder.set_req_data(req_root_builder.into_reader())?;
+
+        let v = serialize::write_message_to_words(&default);
+        return Ok(v);
+    }
+
+    pub fn from_reader(reader: request_data::Reader) -> Result<Self, Box<dyn Error>> {
+        let src = reader.get_src();
+        let dest = reader.get_dest();
+        let req_data = reader.get_req_data()?;
+        let req = chain::CertRequest::from_reader(req_data)?;
+        return Ok(RequestData { src, dest, req_data: req });
+    }
+}
+
 #[derive(Debug)]
 pub struct Update {
     pub src: u64,
@@ -99,6 +206,14 @@ impl Update {
 
     }
 }
+
+pub struct ChainData {
+    pub src: u64,
+    pub dest: u64,
+    pub req_start: String,
+    pub chain_data: Vec<chain::ChainEntry>,
+}
+// TODO: add implementation for creating message and extracting chain data
 
 
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {

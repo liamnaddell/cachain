@@ -5,11 +5,17 @@ struct Msg {
         ping @0;
         pong @1;
         update @2;
+        advert @3;
+        getRequest @4;
+        requestData @5;
     }
     contents :union {
         ping @0 :Ping;
         pong @1 :Pong;
         update @2 :Update;
+        advert @3 :Advert;
+        getRequest @4 :GetRequest;
+        requestData @5 :RequestData;
     }
 }
 
@@ -27,6 +33,27 @@ struct Pong {
     #A list of peers
     peers @3 :List(Text);
 
+}
+
+struct Advert {
+    src @0 :UInt64;
+    dest @1 :UInt64;
+    kind :union {
+        cr @2 :Text;
+        ce @3 :Text;
+    }
+}
+
+struct GetRequest {
+    src @0 :UInt64;
+    dest @1 :UInt64;
+    reqHash @2 :Text;
+}
+
+struct RequestData {
+    src @0 :UInt64;
+    dest @1 :UInt64;
+    reqData @2 :CertRequest;
 }
 
 struct Update {
@@ -56,6 +83,13 @@ struct ChainEntry {
     reqPubkey @7 :Text;
     reqTime @8 :Int64;
     msgSig @9 :Text;
+}
+
+struct CertRequest {
+    hash @0 :Text;
+    url @1 :Text;
+    reqPubkey @2 :Text;
+    reqTime @3 :Int64;
 }
 
 #todo: Add Update response, depends on knowing what a block looks like

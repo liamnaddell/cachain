@@ -2,7 +2,7 @@ use std::error::Error;
 use serde::{Deserialize,Serialize};
 use serde_json::to_string as to_json;
 use sha2::{Sha256, Digest};
-use crate::msg_capnp::chain_entry;
+use crate::msg_capnp::{chain_entry, cert_request};
 use capnp::message::Builder;
 use capnp::text::Reader as TextReader;
 
@@ -15,7 +15,7 @@ pub fn calculate_data_hash(data: &String) -> String {
 }
 
 
-#[derive(Serialize, Deserialize,Clone)]
+#[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct CertRequest {
   hash: String,
   url: String,
@@ -55,6 +55,32 @@ impl CertRequest {
     return to_json(&self).unwrap();
   }
 
+  pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
+    let mut mb = Builder::new_default();
+    let mut cr = mb.init_root::<cert_request::Builder>();
+
+    cr.set_hash(TextReader::from(self.hash.as_str()));
+    cr.set_url(TextReader::from(self.url.as_str()));
+    cr.set_req_pubkey(TextReader::from(self.requester_pubkey.as_str()));
+    cr.set_req_time(self.created_time);
+
+    return mb;
+  }
+
+  pub fn from_reader(cr: cert_request::Reader) -> Result<Self,Box<dyn Error>> {
+    let hash = cr.get_hash()?.to_string()?;
+    let url = cr.get_url()?.to_string()?;
+    let req_pubkey = cr.get_req_pubkey()?.to_string()?;
+    let req_time = cr.get_req_time();
+
+    return Ok(CertRequest {
+      hash,
+      url,
+      requester_pubkey: req_pubkey,
+      created_time: req_time,
+    });
+  }
+
 
   pub fn is_valid_request(&self) -> bool {
     let hash = calculate_data_hash(&self.to_data_string());
@@ -63,7 +89,7 @@ impl CertRequest {
 }
 
 
-#[derive(Serialize, Deserialize,Clone)]
+#[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct ChainEntry {
   hash: String,
   prev_hash: String,
