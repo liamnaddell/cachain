@@ -28,34 +28,46 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             contents::Update(update_reader) => {
                 let update = Update::from_reader(update_reader?)?;
                 println!("Received update: {:?}",update);
-                let update = UpdateResponse{src:ADDR,dest:update.src,chain:db::get_chain()};
+
+                let update = UpdateResponse{
+                    src:ADDR,
+                    dest:update.src,
+                    start_hash: update.start_hash.clone(),  // requested start hash
+                    chain:db::get_tail(&update.start_hash),
+                };
                 let update_r = update.to_capnp();
                 stream.write(&update_r)?;
             }
             contents::UpdateResponse(up_rdr) => {
                 let upd = UpdateResponse::from_reader(up_rdr?)?;
-                //TODO: Validate for security, etc
+                //TODO: MORE Validation for security, etc
+                if !chain::is_valid_chain(
+                    &upd.chain,
+                    upd.start_hash != upd.chain[0].hash
+                ) { 
+                    panic!("Received invalid update :sadge:1");
+                }
                 let succ = db::fast_forward(upd.chain);
                 if !succ {
-                    panic!("Received invalid update :sadge:");
+                    panic!("Cannot add new entries :sadge:2");
                 }
             }
             contents::Advert(adv_reader) => {
                 let adv = Advert::from_reader(adv_reader?)?;
                 match &adv.kind {
-                    AdvertKind::CR(hash) => {
+                    AdvertKind::CE(_hash) => {
+                        // May store this has for cross checking?
                         //TODO: s/msgid/msghash/g
-                        let upd = Update {src: ADDR, dest: adv.src,start_msgid:0,end_msgid:0};
+                        let upd = Update {src: ADDR, dest: adv.src,start_hash: db::get_tip_hash()};
                         let msg = upd.to_capnp()?;
                         stream.write(&msg)?;
                     }
-                    _  => {
-                        //TODO: Save me john-o-wan konobi, you're my only hope
-                        unimplemented!();
+                    AdvertKind::CR(cr)  => {
+                        //TODO: need to store this cert request in memory... somewhere
+                        //      and remove it when a chain entry containing it is received
+                        print!("Received cert request: {:?}",cr);
                     }
                 }
-                unreachable!();
-
             }
             _ => {
                 println!("Unknown msg type received lol");

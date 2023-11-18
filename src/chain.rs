@@ -1,6 +1,5 @@
 use std::error::Error;
 use serde::{Deserialize,Serialize};
-use serde_json::to_string as to_json;
 use sha2::{Sha256, Digest};
 use crate::msg_capnp::{chain_entry, cert_request};
 use capnp::message::Builder;
@@ -26,7 +25,6 @@ pub struct CertRequest {
     pub requester_pubkey: String,
     pub created_time: i64,
 }
-
 impl CertRequest {  
   fn to_data_string(&self) -> String {
     let mut concat = self.url.clone();
@@ -49,11 +47,6 @@ impl CertRequest {
   fn update_hash(&mut self) {
     let data_string = self.to_data_string();
     self.hash = calculate_data_hash(&data_string);
-  }
-
-  //delete method
-  pub fn to_db_serialize(&self) -> String {
-    return to_json(&self).unwrap();
   }
 
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
@@ -102,7 +95,6 @@ pub struct ChainEntry {
   pub msg_signature: String,      // May need to be abstracted out
   pub request: CertRequest,
 }
-
 impl ChainEntry {
   fn to_data_string(&self) -> String {
     let mut concat = self.prev_hash.clone();
@@ -141,10 +133,6 @@ impl ChainEntry {
   pub fn update_hash(&mut self) {
     let data_string = self.to_data_string();
     self.hash = calculate_data_hash(&data_string);
-  }
-
-  pub fn to_db_serialize(&self) -> String {
-    return serde_json::to_string(&self).unwrap();
   }
 
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
