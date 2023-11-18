@@ -5,17 +5,19 @@ struct Msg {
         ping @0;
         pong @1;
         update @2;
-        advert @3;
-        getRequest @4;
-        requestData @5;
+        updateResponse @3;
+        advert @4;
+        getRequest @5;
+        requestData @6;
     }
     contents :union {
         ping @0 :Ping;
         pong @1 :Pong;
         update @2 :Update;
-        advert @3 :Advert;
-        getRequest @4 :GetRequest;
-        requestData @5 :RequestData;
+        updateResponse @3 :UpdateResponse;
+        advert @4 :Advert;
+        getRequest @5 :GetRequest;
+        requestData @6 :RequestData;
     }
 }
 
