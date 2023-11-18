@@ -28,8 +28,34 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             contents::Update(update_reader) => {
                 let update = Update::from_reader(update_reader?)?;
                 println!("Received update: {:?}",update);
-                let update_r = create_update_response(ADDR,update.src,db::get_chain());
+                let update = UpdateResponse{src:ADDR,dest:update.src,chain:db::get_chain()};
+                let update_r = update.to_capnp();
                 stream.write(&update_r)?;
+            }
+            contents::UpdateResponse(up_rdr) => {
+                let upd = UpdateResponse::from_reader(up_rdr?)?;
+                //TODO: Validate for security, etc
+                let succ = db::fast_forward(upd.chain);
+                if !succ {
+                    panic!("Received invalid update :sadge:");
+                }
+            }
+            contents::Advert(adv_reader) => {
+                let adv = Advert::from_reader(adv_reader?)?;
+                match &adv.kind {
+                    AdvertKind::CR(hash) => {
+                        //TODO: s/msgid/msghash/g
+                        let upd = Update {src: ADDR, dest: adv.src,start_msgid:0,end_msgid:0};
+                        let msg = upd.to_capnp()?;
+                        stream.write(&msg)?;
+                    }
+                    _  => {
+                        //TODO: Save me john-o-wan konobi, you're my only hope
+                        unimplemented!();
+                    }
+                }
+                unreachable!();
+
             }
             _ => {
                 println!("Unknown msg type received lol");

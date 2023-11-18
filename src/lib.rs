@@ -6,6 +6,7 @@ use capnp::message::Builder;
 use serde::{Deserialize,Serialize};
 use std::error::Error;
 use core::result::Result;
+use crate::chain::*;
 
 pub mod peers;
 pub mod db;
@@ -71,8 +72,8 @@ impl Pong {
 
 #[derive(Debug)]
 pub enum AdvertKind {
-    CR(String),      // Cert Request hash
-    CE(String),      // Chain Entry hash
+    CR(String),
+    CE(String),
 }
 
 #[derive(Debug)]
@@ -257,7 +258,7 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return buf;
 }
 
-pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
+/*pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
     let mut md = Builder::new_default();
     let mut b = md.init_root::<msg_capnp::update::Builder>();
     b.set_src(src);
@@ -266,23 +267,44 @@ pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec
     b.set_end_msgid(end_msgid);
     let v = serialize::write_message_to_words(&md);
     return v;
+}*/
+
+pub struct UpdateResponse {
+    pub src:u64,
+    pub dest:u64,
+    pub chain: Vec<chain::ChainEntry>,
 }
 
-pub fn create_update_response(src: u64, dest:u64, chain: Vec<chain::ChainEntry>) -> Vec<u8> {
-    let mut message = Builder::new_default();
-    let mut ur = message.init_root::<msg_capnp::update_response::Builder>();
-    let mut b2 = ur.reborrow().init_bchain(chain.len() as u32);
-    let mut i:u32 = 0;
-    for ce in chain.iter() {
-        let mut ceb = ce.to_builder();
-        let ce_builder = ceb.get_root::<chain_entry::Builder>().unwrap();
-        b2.set_with_caveats(i,ce_builder.into_reader()).unwrap();
-        i+=1;
+impl UpdateResponse {
+    pub fn to_capnp(&self) -> Vec<u8> {
+        let mut message = Builder::new_default();
+        let mut ur = message.init_root::<msg_capnp::update_response::Builder>();
+        let mut b2 = ur.reborrow().init_bchain(self.chain.len() as u32);
+        let mut i:u32 = 0;
+        for ce in self.chain.iter() {
+            let mut ceb = ce.to_builder();
+            let ce_builder = ceb.get_root::<chain_entry::Builder>().unwrap();
+            b2.set_with_caveats(i,ce_builder.into_reader()).unwrap();
+            i+=1;
+        }
+        ur.reborrow().set_src(self.src);
+        ur.set_dest(self.dest);
+        let v = serialize::write_message_to_words(&message);
+        return v;
     }
-    ur.reborrow().set_src(src);
-    ur.set_dest(dest);
-    let v = serialize::write_message_to_words(&message);
-    return v;
+    pub fn from_reader(r: update_response::Reader) -> Result<Self,Box<dyn Error>>  {
+        let mut v = vec!();
+        let src = r.get_src();
+        let dest = r.get_dest();
+        let bchain = r.get_bchain()?;
+        for i in 0..bchain.len() {
+            let ce_reader = bchain.get(i);
+            let ce = ChainEntry::from_reader(ce_reader)?;
+            v.push(ce);
+        }
+        return Ok(UpdateResponse {src,dest,chain:v});
+
+    }
 }
 
 pub fn create_pong(src: u64, dest: u64,key: &Rsa<Private>, peers: Vec<String>) -> Vec<u8> {

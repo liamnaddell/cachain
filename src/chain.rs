@@ -7,6 +7,8 @@ use capnp::message::Builder;
 use capnp::text::Reader as TextReader;
 
 
+//TODO: Format uniformly across codebase, no 2 spaces+4 spaces+etc
+
 pub fn calculate_data_hash(data: &String) -> String {
   let mut hasher = Sha256::new();
   hasher.update(data.as_bytes());
@@ -15,12 +17,14 @@ pub fn calculate_data_hash(data: &String) -> String {
 }
 
 
+//TODO: Delete serde code here
+//make requester pubkey not a string
 #[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct CertRequest {
-  hash: String,
-  url: String,
-  requester_pubkey: String,
-  created_time: i64,
+    pub hash: String,
+    pub url: String,
+    pub requester_pubkey: String,
+    pub created_time: i64,
 }
 
 impl CertRequest {  
@@ -31,11 +35,7 @@ impl CertRequest {
     return concat;
   }
   
-  pub fn new(
-    url: String, 
-    requester_pubkey: String,
-    created_time: i64
-  ) -> CertRequest {
+  pub fn new(url: String, requester_pubkey: String, created_time: i64) -> CertRequest {
     let mut request = CertRequest {
       hash: "".to_string(),
       url,
@@ -51,6 +51,7 @@ impl CertRequest {
     self.hash = calculate_data_hash(&data_string);
   }
 
+  //delete method
   pub fn to_db_serialize(&self) -> String {
     return to_json(&self).unwrap();
   }
@@ -82,6 +83,7 @@ impl CertRequest {
   }
 
 
+  //rustify api
   pub fn is_valid_request(&self) -> bool {
     let hash = calculate_data_hash(&self.to_data_string());
     return hash == self.hash;
@@ -89,15 +91,16 @@ impl CertRequest {
 }
 
 
+//remove serde code, etc
 #[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct ChainEntry {
-  hash: String,
-  prev_hash: String,
-  height: u64,
-  signed_time: i64,
-  verifier_signature: String, // may need more info on verifier
-  msg_signature: String,      // May need to be abstracted out
-  request: CertRequest,
+  pub hash: String,
+  pub prev_hash: String,
+  pub height: u64,
+  pub signed_time: i64,
+  pub verifier_signature: String, // may need more info on verifier
+  pub msg_signature: String,      // May need to be abstracted out
+  pub request: CertRequest,
 }
 
 impl ChainEntry {

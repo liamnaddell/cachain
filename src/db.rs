@@ -5,7 +5,6 @@ use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::ops::{Deref,DerefMut};
-use crate::chain::*;
 
 
 lazy_static! {
@@ -20,11 +19,23 @@ pub struct DB {
 
 use rand::random;
 impl DB {
-    fn new() -> DB {
+    pub fn new() -> DB {
         let v = vec!();
         let pkey = generate();
         return DB { chain: v, pkey: pkey, addr:random()};
     }
+    pub fn fast_forward(&mut self, chain: Vec<ChainEntry>) -> bool {
+        for new_head in chain.iter() {
+            let head = &self.chain[self.chain.len()-1];
+            if head.hash == new_head.prev_hash {
+                self.chain.push(new_head.clone());
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
 }
 
 fn to_disk_db() -> DiskDB {
@@ -89,6 +100,29 @@ pub fn get_addr() -> u64 {
     return db.addr;
 }
 
+//all the info one might need to know about a peer/non-peer
+//TODO: merge with Peer struct
+pub struct NodeInfo {
+    pub url: String,
+    pub key: Rsa<Public>,
+    pub addr: u64,
+}
+
+pub fn current_elector() -> NodeInfo {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    assert!(db.chain.len() != 0);
+    let head = &db.chain[db.chain.len()-1];
+    let req = &head.request;
+    //TODO: Fix this
+    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:0};
+    return ni;
+}
+pub fn fast_forward(v: Vec<ChainEntry>) -> bool {
+    let mut guard = DB_I.lock().unwrap();
+    let db = guard.deref_mut().as_mut().expect("should be initialized");
+    return db.fast_forward(v);
+}
 
 //NOTE: Such a function is impossible to write unfortunately, since there are currently no methods
 //for transforming the type inside a mutex....
