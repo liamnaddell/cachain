@@ -7,8 +7,6 @@ struct Msg {
         update @2;
         updateResponse @3;
         advert @4;
-        getRequest @5;
-        requestData @6;
     }
     contents :union {
         ping @0 :Ping;
@@ -16,8 +14,6 @@ struct Msg {
         update @2 :Update;
         updateResponse @3 :UpdateResponse;
         advert @4 :Advert;
-        getRequest @5 :GetRequest;
-        requestData @6 :RequestData;
     }
 }
 
@@ -41,7 +37,7 @@ struct Advert {
     src @0 :UInt64;
     dest @1 :UInt64;
     kind :union {
-        cr @2 :Text;
+        cr @2 :CertRequest;
         ce @3 :Text;
     }
 }
@@ -62,16 +58,15 @@ struct Update {
     src @0 :UInt64;
     dest @1 :UInt64;
     #update starting at id 
-    startMsgid @2 :UInt32;
-    #update ending at id, 0=all updates
-    endMsgid @3 :UInt32;
+    startHash @2 :Text;
 }
 
-#note: A more secure protocol would have the sender sign update responses
+#TODO: Remove this struct once we replaced the code.
 struct UpdateResponse {
     src @0 :UInt64;
     dest @1 :UInt64;
-    bchain @2 :List(ChainEntry);
+    startHash @2 :Text;
+    bchain @3 :List(ChainEntry);
 }
 
 struct ChainEntry {

@@ -37,7 +37,7 @@ fn main() -> Result<(),Box<dyn Error>> {
     println!("{:?}",pong);
     deserialize_pubkey(pong.get_key()?.to_string()?);
 
-    let update = Update {src:MY_ADDR,dest:pong.get_src(),start_msgid:0,end_msgid:0};
+    let update = Update {src:MY_ADDR,dest:pong.get_src(),start_hash:"".to_string()};
     let msg_update = update.to_capnp()?;
 
     stream.write(&msg_update)?;

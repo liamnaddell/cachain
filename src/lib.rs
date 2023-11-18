@@ -72,8 +72,8 @@ impl Pong {
 
 #[derive(Debug)]
 pub enum AdvertKind {
-    CR(String),
-    CE(String),
+    CR(chain::CertRequest),      // Cert Request data
+    CE(String),                  // Chain Entry hash
 }
 
 #[derive(Debug)]
@@ -87,8 +87,10 @@ impl Advert {
         let src = p.get_src();
         let dest = p.get_dest();
         let kind: AdvertKind = match p.get_kind().which()? {
-            advert::kind::Cr(cr) => AdvertKind::CR(cr?.to_string()?),
-            advert::kind::Ce(ce) => AdvertKind::CE(ce?.to_string()?),
+            advert::kind::Cr(cr) 
+                => AdvertKind::CR(chain::CertRequest::from_reader(cr?)?),
+            advert::kind::Ce(ce) 
+                => AdvertKind::CE(ce?.to_string()?),
         };
         return Ok(Advert { src, dest, kind });
     }
@@ -103,7 +105,9 @@ impl Advert {
         let mut kind_builder = ad_builder.init_kind();
         match &self.kind {
             AdvertKind::CR(cr) => {
-                kind_builder.set_cr(text::Reader::from(cr.as_str()));
+                let mut req_builder = cr.to_builder();
+                let cr_builder = req_builder.get_root::<cert_request::Builder>().unwrap();
+                kind_builder.set_cr(cr_builder.into_reader())?;
             }
             AdvertKind::CE(ce) => {
                 kind_builder.set_ce(text::Reader::from(ce.as_str()));
@@ -115,81 +119,18 @@ impl Advert {
     }
 }
 
-
-#[derive(Debug)]
-pub struct GetRequest {
-    pub src: u64,
-    pub dest: u64,
-    pub req_hash: String,
-}
-impl GetRequest {
-    pub fn from_reader(p: get_request::Reader) -> Result<Self, Box<dyn Error>> {
-        let src = p.get_src();
-        let dest = p.get_dest();
-        let req_hash = p.get_req_hash()?.to_string()?;
-        return Ok(GetRequest { src, dest, req_hash });
-    }
-
-    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut msg_default = Builder::new_default();
-        let msg_builder = msg_default.init_root::<msg_capnp::msg::Builder>();
-        let c_builder = msg_builder.init_contents();
-        let mut gr_builder = c_builder.init_get_request();
-        gr_builder.set_src(self.src);
-        gr_builder.set_dest(self.dest);
-        gr_builder.set_req_hash(text::Reader::from(self.req_hash.as_str()));
-
-        let v = serialize::write_message_to_words(&msg_default);
-        return Ok(v);
-    }
-}
-
-pub struct RequestData {
-    pub src: u64,
-    pub dest: u64,
-    pub req_data: chain::CertRequest,
-}
-impl RequestData {
-    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut default = Builder::new_default();
-        let msg_builder = default.init_root::<msg_capnp::msg::Builder>();
-        let c_builder = msg_builder.init_contents();
-        let mut rd_builder = c_builder.init_request_data();
-        
-        rd_builder.set_src(self.src);
-        rd_builder.set_dest(self.dest);
-        
-        let mut req_builder = self.req_data.to_builder();
-        let req_root_builder = req_builder.get_root::<cert_request::Builder>().unwrap();
-        rd_builder.set_req_data(req_root_builder.into_reader())?;
-
-        let v = serialize::write_message_to_words(&default);
-        return Ok(v);
-    }
-
-    pub fn from_reader(reader: request_data::Reader) -> Result<Self, Box<dyn Error>> {
-        let src = reader.get_src();
-        let dest = reader.get_dest();
-        let req_data = reader.get_req_data()?;
-        let req = chain::CertRequest::from_reader(req_data)?;
-        return Ok(RequestData { src, dest, req_data: req });
-    }
-}
-
 #[derive(Debug)]
 pub struct Update {
     pub src: u64,
     pub dest: u64,
-    pub start_msgid: u32,
-    pub end_msgid: u32,
+    pub start_hash: String,
 }
 impl Update {
     pub fn from_reader(p: update::Reader) -> Result<Self,Box<dyn Error>> {
         let src = p.get_src();
         let dest = p.get_dest();
-        let start_msgid=p.get_start_msgid();
-        let end_msgid=p.get_end_msgid();
-        return Ok(Update {src:src,dest:dest,start_msgid,end_msgid});
+        let start_hash = p.get_start_hash()?.to_string()?;
+        return Ok(Update {src,dest,start_hash});
     }
     pub fn to_capnp(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut message = Builder::new_default();
@@ -198,8 +139,7 @@ impl Update {
         let mut b = c_b.init_update();
         b.set_src(self.src);
         b.set_dest(self.dest);
-        b.set_start_msgid(self.start_msgid);
-        b.set_end_msgid(self.end_msgid);
+        b.set_start_hash(text::Reader::from(self.start_hash.as_str()));
 
         let v = serialize::write_message_to_words(&message);
 
@@ -207,15 +147,6 @@ impl Update {
 
     }
 }
-
-pub struct ChainData {
-    pub src: u64,
-    pub dest: u64,
-    pub req_start: String,
-    pub chain_data: Vec<chain::ChainEntry>,
-}
-// TODO: add implementation for creating message and extracting chain data
-
 
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
@@ -263,8 +194,7 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     let mut b = md.init_root::<msg_capnp::update::Builder>();
     b.set_src(src);
     b.set_dest(dest);
-    b.set_start_msgid(start_msgid);
-    b.set_end_msgid(end_msgid);
+    b.set_start_hash(text::Reader::from(start_hash.as_str()));
     let v = serialize::write_message_to_words(&md);
     return v;
 }*/
@@ -272,9 +202,9 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
 pub struct UpdateResponse {
     pub src:u64,
     pub dest:u64,
-    pub chain: Vec<chain::ChainEntry>,
+    pub start_hash: String,             // requested start hash
+    pub chain: Vec<chain::ChainEntry>,  // chain entries (maybe the whole chain)
 }
-
 impl UpdateResponse {
     pub fn to_capnp(&self) -> Vec<u8> {
         let mut message = Builder::new_default();
@@ -288,6 +218,7 @@ impl UpdateResponse {
             i+=1;
         }
         ur.reborrow().set_src(self.src);
+        ur.set_start_hash(text::Reader::from(self.start_hash.as_str()));
         ur.set_dest(self.dest);
         let v = serialize::write_message_to_words(&message);
         return v;
@@ -296,13 +227,14 @@ impl UpdateResponse {
         let mut v = vec!();
         let src = r.get_src();
         let dest = r.get_dest();
+        let start_hash = r.get_start_hash()?.to_string()?;
         let bchain = r.get_bchain()?;
         for i in 0..bchain.len() {
             let ce_reader = bchain.get(i);
             let ce = ChainEntry::from_reader(ce_reader)?;
             v.push(ce);
         }
-        return Ok(UpdateResponse {src,dest,chain:v});
+        return Ok(UpdateResponse {src,dest,start_hash,chain:v});
 
     }
 }

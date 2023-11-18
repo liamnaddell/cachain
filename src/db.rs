@@ -36,6 +36,25 @@ impl DB {
         return true;
     }
 
+    /// Return the tail of the chain starting from and including the
+    /// chain entry with hash `start_hash`.
+    /// If `start_hash` is not in the chain, return the whole chain.
+    pub fn get_tail(&self, start_hash: &str) -> Vec<ChainEntry> {        
+        let mut v = vec!();
+        for entry in self.chain.iter().rev() {
+            v.insert(0,entry.clone());
+            if entry.hash == start_hash {
+                break;
+            }
+        }
+        return v;
+    }
+
+    /// Return the hash of the last chain entry.
+    pub fn get_tip_hash(&self) -> String {
+        let head = &self.chain[self.chain.len()-1];
+        return head.hash.clone();
+    }
 }
 
 fn to_disk_db() -> DiskDB {
@@ -91,6 +110,18 @@ pub fn get_chain() -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     return db.chain.clone();
+}
+
+pub fn get_tail(start_hash: &str) -> Vec<ChainEntry> {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.get_tail(start_hash);
+}
+
+pub fn get_tip_hash() -> String {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.get_tip_hash();
 }
 
 //TODO: This is also stupid, put this data in read-only structure somewhere else with no mutex
