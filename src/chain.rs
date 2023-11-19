@@ -4,15 +4,16 @@ use sha2::{Sha256, Digest};
 use crate::msg_capnp::{chain_entry, cert_request};
 use capnp::message::Builder;
 use capnp::text::Reader as TextReader;
+use crate::*;
 
 
 //TODO: Format uniformly across codebase, no 2 spaces+4 spaces+etc
 
-pub fn calculate_data_hash(data: &String) -> String {
-  let mut hasher = Sha256::new();
-  hasher.update(data.as_bytes());
-  let hash = hasher.finalize();
-  return format!("{:x}",hash);
+pub fn calculate_data_hash(data:&Vec<u8>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_slice());
+    let hash = hasher.finalize();
+    return format!("{:x}",hash);
 }
 
 
@@ -20,10 +21,11 @@ pub fn calculate_data_hash(data: &String) -> String {
 //make requester pubkey not a string
 #[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct CertRequest {
+    pub src: u64,
     pub hash: String,
     pub url: String,
     pub requester_pubkey: String,
-    pub created_time: i64,
+    pub created_time: u64,
 }
 impl CertRequest {  
   fn to_data_string(&self) -> String {
@@ -33,26 +35,31 @@ impl CertRequest {
     return concat;
   }
   
-  pub fn new(url: String, requester_pubkey: String, created_time: i64) -> CertRequest {
+  pub fn new(url: String) -> CertRequest {
     let mut request = CertRequest {
+        src: db::get_addr(),
       hash: "".to_string(),
       url,
-      requester_pubkey,
-      created_time,
+      requester_pubkey:String::from_utf8(serialize_pubkey(&db::get_key())).unwrap(),
+      created_time:time_now(),
     };
     request.update_hash();
     return request;
   }
 
   fn update_hash(&mut self) {
-    let data_string = self.to_data_string();
+    let data_string = Vec::from(self.to_data_string().as_bytes());
     self.hash = calculate_data_hash(&data_string);
   }
 
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
     let mut mb = Builder::new_default();
-    let mut cr = mb.init_root::<cert_request::Builder>();
-
+    let msg = mb.init_root::<msg::Builder>();
+    let cts = msg.init_contents();
+    let mut adv = cts.init_advert();
+    adv.set_src(db::get_addr());
+    let adv_kind = adv.reborrow().init_kind();
+    let mut cr = adv_kind.init_cr();
     cr.set_hash(TextReader::from(self.hash.as_str()));
     cr.set_url(TextReader::from(self.url.as_str()));
     cr.set_req_pubkey(TextReader::from(self.requester_pubkey.as_str()));
@@ -66,8 +73,10 @@ impl CertRequest {
     let url = cr.get_url()?.to_string()?;
     let req_pubkey = cr.get_req_pubkey()?.to_string()?;
     let req_time = cr.get_req_time();
+    let src = cr.get_src();
 
     return Ok(CertRequest {
+        src,
       hash,
       url,
       requester_pubkey: req_pubkey,
@@ -78,11 +87,51 @@ impl CertRequest {
 
   //rustify api
   pub fn is_valid_request(&self) -> bool {
-    let hash = calculate_data_hash(&self.to_data_string());
+      let dsbytes = Vec::from(self.to_data_string().as_bytes());
+    let hash = calculate_data_hash(&dsbytes);
     return hash == self.hash;
   }
 }
 
+#[derive(Debug)]
+pub struct Challenge {
+    pub src: u64,
+    pub dest: u64,
+    pub chal_str: String,
+    pub time: u64,
+}
+
+impl Challenge {
+    pub fn new(dest: u64, chal_str: String) -> Self {
+        return Challenge {
+            src: db::get_addr(),
+            dest,
+            chal_str,
+            time:time_now(),
+        };
+    }
+    pub fn to_msg(&self) -> Vec<u8> {
+        let mut message = Builder::new_default();
+        let msg_builder = message.init_root::<msg_capnp::msg::Builder>();
+        let c_b = msg_builder.init_contents();
+        let mut b = c_b.init_challenge();
+        b.set_src(self.src);
+        b.set_dest(self.dest);
+        b.set_challenge_string(text::Reader::from(self.chal_str.as_str()));
+
+        let v = serialize::write_message_to_words(&message);
+
+        return v;
+    }
+    pub fn from_reader(r: challenge::Reader) -> Result<Self,Box<dyn Error>>  {
+        let src = r.get_src();
+        let dest = r.get_dest();
+        let time = r.get_time();
+        let chal_str = r.get_challenge_string()?.to_string()?;
+        return Ok(Challenge{src,dest,chal_str,time});
+
+    }
+}
 
 //remove serde code, etc
 #[derive(Serialize,Deserialize,Clone,Debug)]
@@ -90,31 +139,32 @@ pub struct ChainEntry {
   pub hash: String,
   pub prev_hash: String,
   pub height: u64,
-  pub signed_time: i64,
-  pub verifier_signature: String, // may need more info on verifier
-  pub msg_signature: String,      // May need to be abstracted out
+  pub signed_time: u64,
+  pub verifier_signature: Vec<u8>, // may need more info on verifier
+  pub msg_signature: Vec<u8>,      // May need to be abstracted out
   pub request: CertRequest,
 }
 impl ChainEntry {
-  fn to_data_string(&self) -> String {
-    let mut concat = self.prev_hash.clone();
-    concat.push('|');
-    concat.push_str(&self.height.to_string());
-    concat.push('|');
-    concat.push_str(&self.signed_time.to_string());
-    concat.push('|');
-    concat.push_str(&self.verifier_signature);
-    concat.push('|');
-    concat.push_str(&self.request.hash);
+  fn to_data_string(&self) -> Vec<u8> {
+    let mut concat = vec!();
+    concat.extend_from_slice(self.prev_hash.as_bytes());
+    concat.push(b'|');
+    //concat.extend_from_slice(&self.height());
+    concat.push(b'|');
+    concat.extend_from_slice(&self.signed_time.to_string().as_bytes());
+    concat.push(b'|');
+    concat.extend_from_slice(&self.verifier_signature);
+    concat.push(b'|');
+    concat.extend_from_slice(self.request.hash.as_bytes());
     return concat;
   }
   
   pub fn new(
     prev_hash: String,
     height: u64, 
-    signed_time: i64,
-    verifier_signature: String,
-    msg_signature: String,
+    signed_time: u64,
+    verifier_signature: Vec<u8>,
+    priv_key: Rsa<Private>, /* used to calculate message signature */
     request: CertRequest,
   ) -> ChainEntry {
     let mut entry = ChainEntry {
@@ -123,10 +173,15 @@ impl ChainEntry {
       height,
       signed_time,
       verifier_signature,
-      msg_signature,
+      msg_signature:vec!(),
       request,
     };
     entry.update_hash();
+    let data = entry.to_data_string();
+    entry.msg_signature=sign(priv_key,data);
+
+    
+
     return entry;
   }
 
@@ -143,12 +198,12 @@ impl ChainEntry {
     ce.set_prev_hash(TextReader::from(self.prev_hash.as_str()));
     ce.set_height(self.height);
     ce.set_signed_time(self.signed_time);
-    ce.set_verifier_sig(TextReader::from(self.verifier_signature.as_str()));
+    ce.set_verifier_sig(self.verifier_signature.as_slice());
     ce.set_req_hash(TextReader::from(self.request.hash.as_str()));
     ce.set_url(TextReader::from(self.request.url.as_str()));
     ce.set_req_pubkey(TextReader::from(self.request.requester_pubkey.as_str()));
     ce.set_req_time(self.request.created_time);
-    ce.set_msg_sig(TextReader::from(self.msg_signature.as_str()));
+    ce.set_msg_sig(self.msg_signature.as_slice());
 
     return mb;
   }
@@ -158,14 +213,16 @@ impl ChainEntry {
     let prev_hash = ce.get_prev_hash()?.to_string()?;
     let height = ce.get_height();
     let signed_time = ce.get_signed_time();
-    let verifier_signature = ce.get_verifier_sig()?.to_string()?;
-    let msg_signature = ce.get_msg_sig()?.to_string()?;
+    let verifier_signature = Vec::from(ce.get_verifier_sig()?);
+    let msg_signature = Vec::from(ce.get_msg_sig()?);
     let req_hash = ce.get_req_hash()?.to_string()?;
     let url = ce.get_url()?.to_string()?;
     let req_pubkey = ce.get_req_pubkey()?.to_string()?;
     let req_time = ce.get_req_time();
+    let src = ce.get_addr();
 
     let request = CertRequest {
+        src:src,
       hash: req_hash,
       url,
       requester_pubkey: req_pubkey,

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::ops::{Deref,DerefMut};
 
 
+
 lazy_static! {
 static ref DB_I: Mutex<Option<DB>> = Mutex::new(None);
 }
@@ -25,6 +26,10 @@ impl DB {
         return DB { chain: v, pkey: pkey, addr:random()};
     }
     pub fn fast_forward(&mut self, chain: Vec<ChainEntry>) -> bool {
+        if self.chain.len() == 0 {
+            self.chain=chain;
+            return true;
+        }
         for new_head in chain.iter() {
             let head = &self.chain[self.chain.len()-1];
             if head.hash == new_head.prev_hash {
@@ -51,9 +56,12 @@ impl DB {
     }
 
     /// Return the hash of the last chain entry.
-    pub fn get_tip_hash(&self) -> String {
+    pub fn get_tip_hash(&self) -> Option<String> {
+        if self.chain.len() == 0 {
+            return None;
+        }
         let head = &self.chain[self.chain.len()-1];
-        return head.hash.clone();
+        return Some(head.hash.clone());
     }
 }
 
@@ -80,6 +88,16 @@ struct DiskDB {
     addr:u64,
 }
 
+//cache commonly required data to avoid lock contention+deadlocks
+#[derive(Debug)]
+struct StaticInfo {
+    pub key: Rsa<Private>,
+    pub addr: u64,
+}
+
+use std::sync::OnceLock;
+static S_DATA: OnceLock<StaticInfo> = OnceLock::new();
+
 use std::path::Path;
 //creates DB if it doesn't exist
 pub fn load_db(file: &str) {
@@ -97,12 +115,28 @@ pub fn load_db(file: &str) {
         let ddb: DiskDB = serde_json::from_str(&data).unwrap();
         from_disk_db(ddb);
     }
+    init_static_data();
 }
-
-pub fn get_key() -> Rsa<Private> {
+pub fn init_static_data() {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
-    return db.pkey.clone();
+    let data = StaticInfo {
+        key:db.pkey.clone(),
+        addr:db.addr,
+    };
+    S_DATA.set(data).unwrap();
+}
+
+
+pub fn get_key() -> Rsa<Private> {
+    let sd = S_DATA.get().unwrap();
+    return sd.key.clone();
+}
+
+//TODO: This is also stupid, put this data in read-only structure somewhere else with no mutex
+pub fn get_addr() -> u64 {
+    let sd = S_DATA.get().unwrap();
+    return sd.addr;
 }
 
 //TODO: THIS IS REALLY DUMB
@@ -112,24 +146,41 @@ pub fn get_chain() -> Vec<ChainEntry> {
     return db.chain.clone();
 }
 
+pub fn find_hash(hash: &str) -> Option<ChainEntry> {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    for ce in &db.chain {
+        if &ce.hash == hash {
+            return Some(ce.clone());
+        }
+    }
+    return None;
+}
+
+pub fn find_by_domain(domain: &String) -> Vec<ChainEntry> {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    let mut v = vec!();
+    for ce in &db.chain {
+        if &ce.request.url == domain {
+            v.push(ce.clone());
+        }
+    }
+    return v;
+}
+
 pub fn get_tail(start_hash: &str) -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     return db.get_tail(start_hash);
 }
 
-pub fn get_tip_hash() -> String {
+pub fn get_tip_hash() -> Option<String> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     return db.get_tip_hash();
 }
 
-//TODO: This is also stupid, put this data in read-only structure somewhere else with no mutex
-pub fn get_addr() -> u64 {
-    let guard = DB_I.lock().unwrap();
-    let db = guard.deref().as_ref().expect("should be initialized");
-    return db.addr;
-}
 
 //all the info one might need to know about a peer/non-peer
 //TODO: merge with Peer struct
@@ -153,6 +204,24 @@ pub fn fast_forward(v: Vec<ChainEntry>) -> bool {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
     return db.fast_forward(v);
+}
+
+pub fn generate_new_genesis(url: String) {
+    let mut guard = DB_I.lock().unwrap();
+    let db = guard.deref_mut().as_mut().expect("should be initialized");
+
+    //generate key to verify ourselves with
+    let verifier_key = generate();
+
+    let our_pubkey = private_to_public(&db.pkey);
+
+    let sigin = x509_sign(verifier_key,our_pubkey);
+
+
+    let cr = CertRequest::new(url);
+    let ce = ChainEntry::new("".to_string(),0,time_now(),sigin.into(),db.pkey.clone(),cr);
+    db.chain=vec!(ce);
+    
 }
 
 //NOTE: Such a function is impossible to write unfortunately, since there are currently no methods
