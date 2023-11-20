@@ -95,6 +95,10 @@ impl Advert {
         return Ok(Advert { src, dest, kind });
     }
 
+    pub fn mint_new_block(dest:u64, hash: &str) -> Self {
+        return Advert {src: db::get_addr(), dest: dest, kind: AdvertKind::CE(hash.to_string())};
+    }
+
     pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
         let mut msg_default = Builder::new_default();
         let msg_builder = msg_default.init_root::<msg_capnp::msg::Builder>();
@@ -148,6 +152,12 @@ impl Update {
     }
 }
 
+use std::time::SystemTime;
+pub fn time_now() -> u64 {
+    let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    return secs.as_secs();
+}
+
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
     let v = to_encode.public_key_to_pem().unwrap();
@@ -164,6 +174,12 @@ pub fn serialize_pubkey2(key: &Rsa<Public>) -> Vec<u8> {
 pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode;
+}
+
+//TODO: FIX
+pub fn deserialize_pubkey2(keytext: &str) -> Rsa<Public> {
+    let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
+    return to_encode.rsa().unwrap();
 }
 
 pub fn serialize_privkey(key: &Rsa<Private>) -> Vec<u8> {
@@ -199,6 +215,7 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return v;
 }*/
 
+#[derive(Debug)]
 pub struct UpdateResponse {
     pub src:u64,
     pub dest:u64,
@@ -259,6 +276,47 @@ pub mod msg_capnp {
     include!(concat!(env!("OUT_DIR"), "/msg_capnp.rs"));
 }
 
+
+pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>) -> String {
+        let verifier_pkey = PKey::from_rsa(private).unwrap();
+        //an x509 request is the certificate of the CA
+        let mut req_builder: X509ReqBuilder = X509ReqBuilder::new().unwrap();
+        req_builder.set_pubkey(&verifier_pkey).unwrap();
+        //let verifier_req: X509Req = req_builder.build();
+        //use to_pem to serialize
+
+        //Now we are going to use verifier_req to sign a certificate
+        let verified_pkey = PKey::from_rsa(public).unwrap();
+        let mut other_builder = X509ReqBuilder::new().unwrap();
+        other_builder.set_pubkey(&verified_pkey).unwrap();
+        other_builder.sign(&verifier_pkey,MessageDigest::sha384()).unwrap();
+        let verified_req: X509Req = other_builder.build();
+        return String::from_utf8(verified_req.to_pem().unwrap()).unwrap();
+
+}
+
+/*pub fn verify_signature(public: Rsa<Public>, data: String) -> bool {
+    let mut verifier = Verifier::new(MessageDigest::sha256(), &public).unwrap();
+    verifier.update(data).unwrap();
+    assert!(verifier.verify(&signature).unwrap());
+    return false;
+}*/
+
+use openssl::sign::Signer;
+use openssl::hash::MessageDigest;
+use openssl::x509::*;
+
+
+pub fn sign(private: Rsa<Private>, data: Vec<u8>) -> Vec<u8> {
+    // Generate a keypair
+    let keypair = PKey::from_rsa(private).unwrap();
+
+    // Sign the data
+    let mut signer = Signer::new(MessageDigest::sha256(), &keypair).unwrap();
+    signer.update(&data.as_slice()).unwrap();
+    let signature = signer.sign_to_vec().unwrap();
+    return signature;
+}
 
 #[cfg(test)]
 mod tests {

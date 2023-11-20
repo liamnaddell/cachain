@@ -9,6 +9,7 @@ use std::net::ToSocketAddrs;
 use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use std::net::SocketAddr;
 
 pub struct Peer {
     pub url: String,
@@ -45,6 +46,7 @@ impl Peer {
 }
 
 pub struct Peers {
+    me: SocketAddr,
     peers: Vec<Peer>,
     potential_peers: HashSet<String>,
     peerno: usize,
@@ -80,11 +82,18 @@ pub fn add_potential(paddr: &str) {
     peers.potential_peers.insert(paddr.to_string());
 }
 
-pub fn init(peer: Option<String>,peerno: usize) {
+pub fn update_chain(hash: String) {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    peers.update_chain(hash);
+}
+
+pub fn init(me: String, peer: Option<String>,peerno: usize) {
     {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut();
-    let mut peers = Peers::new(peer,peerno);
+    let mut peers = Peers::new(me,peer,peerno);
     let peerc = peers.generate();
     assert!(peerno == 0 || peerc != 0);
     *option_peer = Some(peers);
@@ -105,12 +114,32 @@ impl Peers {
             if peer.addr == blacklist {
                 continue;
             }
+            println!("[peers] broadcasting to {}",&peer.url);
             peer.send_msg(&msg)?;
             i+=1;
         }
         return Ok(i);
     }
-    pub fn new(peer: Option<String>,peerno: usize) -> Self {
+    pub fn update_chain(&mut self, hash: String) {
+        let upd = Update {src: db::get_addr(), dest: 0xdeadbeef,start_hash: hash};
+        let msg = upd.to_capnp().unwrap();
+        //TODO: DELETE UNWRAPS, MUST BE DONE BEFORE SUBMISSION
+        //TODO: REFACTOR broadcast API to NOT RETURN RESULTS!!!
+        //TODO: REFACTOR capnp serialization API to NOT RETURN RESULTS!!!
+        self.broadcast(msg,0).unwrap();
+        for peer in self.peers.iter_mut() {
+            let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new()).unwrap();
+            let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>().unwrap();
+                    //TODO: VALIDATE!
+                    let upd = UpdateResponse::from_reader(msg_reader).unwrap();
+                    println!("Received update_response from inside peers: {:?}",upd);
+                    let succ = db::fast_forward(upd.chain);
+                    if !succ {
+                        panic!("Cannot add new entries :sadge:2");
+                    }
+                }
+    }
+    pub fn new(me: String, peer: Option<String>,peerno: usize) -> Self {
         let hs = {
             let mut hs = HashSet::new();
             if let Some(s) = peer {
@@ -118,7 +147,11 @@ impl Peers {
             }
             hs
         };
-        let peers  = Peers{peers:vec!(),potential_peers:hs,peerno:peerno};
+        println!("[peers] resolving own hostname: {}",&me);
+        let mut addrs = me.to_socket_addrs().unwrap();
+        let socket = addrs.next().ok_or("resolution failed").unwrap();
+        let peers = Peers{me: socket, peers:vec!(),potential_peers:hs,peerno:peerno};
+
         return peers;
     }
     pub fn generate_peer(&mut self) -> Result<(),Box<dyn Error>> {
@@ -132,10 +165,13 @@ impl Peers {
                 peer
             }
         };
-        println!("Attepting to enter peership with {url}");
         let addrs = url.to_socket_addrs();
         let mut socket = addrs?.next().ok_or("resolution failed")?;
         socket.set_port(8069);
+        println!("Attempting to enter peership with {:?}",socket);
+        if socket == self.me {
+            return Err(Box::<dyn Error + Send + Sync>::from("Not peering to self"));
+        }
         let mut stream = TcpStream::connect(socket)?;
         let ping = {
             Ping {src:db::get_addr(),dest:0,key:private_to_public(&db::get_key())}
@@ -147,7 +183,8 @@ impl Peers {
         let pong_msg = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
         let pong = Pong::from_reader(pong_msg)?;
         println!("[peers] Entered peership with {}",&url);
-        let peer = Peer::from_pong(url,&pong);
+        let sa = format!("{:?}",socket);
+        let peer = Peer::from_pong(sa,&pong);
         self.peers.push(peer);
         for pong_peer in pong.peers.iter() {
             let mut already_peered_w = false;

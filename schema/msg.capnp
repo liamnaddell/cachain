@@ -7,6 +7,7 @@ struct Msg {
         update @2;
         updateResponse @3;
         advert @4;
+        challenge @5;
     }
     contents :union {
         ping @0 :Ping;
@@ -14,7 +15,16 @@ struct Msg {
         update @2 :Update;
         updateResponse @3 :UpdateResponse;
         advert @4 :Advert;
+        challenge @5 :Challenge;
     }
+}
+
+#TODO: Sign these
+struct Challenge {
+    src @0 :UInt64;
+    dest @1 :UInt64;
+    challengeString @2 :Text;
+    time @3 : UInt64;
 }
 
 struct Ping {
@@ -73,20 +83,22 @@ struct ChainEntry {
     hash @0 :Text;
     prevHash @1 :Text;
     height @2 :UInt64;
-    signedTime @3 :Int64;
-    verifierSig @4 :Text;
+    signedTime @3 :UInt64;
+    verifierSig @4 :Data;
     reqHash @5 :Text;
     url @6 :Text;
     reqPubkey @7 :Text;
-    reqTime @8 :Int64;
-    msgSig @9 :Text;
+    reqTime @8 :UInt64;
+    msgSig @9 :Data;
+    addr @10 :UInt64;
 }
 
 struct CertRequest {
     hash @0 :Text;
     url @1 :Text;
     reqPubkey @2 :Text;
-    reqTime @3 :Int64;
+    reqTime @3 :UInt64;
+    src @4 :UInt64;
 }
 
 #todo: Add Update response, depends on knowing what a block looks like
