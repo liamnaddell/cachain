@@ -6,6 +6,7 @@ use capnp::message::Builder;
 use serde::{Deserialize,Serialize};
 use std::error::Error;
 use core::result::Result;
+use crate::chain::*;
 
 pub mod peers;
 pub mod db;
@@ -68,20 +69,72 @@ impl Pong {
     }
 }
 
+
+#[derive(Debug)]
+pub enum AdvertKind {
+    CR(chain::CertRequest),      // Cert Request data
+    CE(String),                  // Chain Entry hash
+}
+
+#[derive(Debug)]
+pub struct Advert {
+    pub src: u64,
+    pub dest: u64,
+    pub kind: AdvertKind,
+}
+impl Advert {
+    pub fn from_reader(p: advert::Reader) -> Result<Self, Box<dyn Error>> {
+        let src = p.get_src();
+        let dest = p.get_dest();
+        let kind: AdvertKind = match p.get_kind().which()? {
+            advert::kind::Cr(cr) 
+                => AdvertKind::CR(chain::CertRequest::from_reader(cr?)?),
+            advert::kind::Ce(ce) 
+                => AdvertKind::CE(ce?.to_string()?),
+        };
+        return Ok(Advert { src, dest, kind });
+    }
+
+    pub fn mint_new_block(dest:u64, hash: &str) -> Self {
+        return Advert {src: db::get_addr(), dest: dest, kind: AdvertKind::CE(hash.to_string())};
+    }
+
+    pub fn to_msg(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut msg_default = Builder::new_default();
+        let msg_builder = msg_default.init_root::<msg_capnp::msg::Builder>();
+        let c_builder = msg_builder.init_contents();
+        let mut ad_builder = c_builder.init_advert();
+        ad_builder.set_src(self.src);
+        ad_builder.set_dest(self.dest);
+        let mut kind_builder = ad_builder.init_kind();
+        match &self.kind {
+            AdvertKind::CR(cr) => {
+                let mut req_builder = cr.to_builder();
+                let cr_builder = req_builder.get_root::<cert_request::Builder>().unwrap();
+                kind_builder.set_cr(cr_builder.into_reader())?;
+            }
+            AdvertKind::CE(ce) => {
+                kind_builder.set_ce(text::Reader::from(ce.as_str()));
+            }
+        };
+
+        let v = serialize::write_message_to_words(&msg_default);
+        return Ok(v);
+    }
+}
+
 #[derive(Debug)]
 pub struct Update {
     pub src: u64,
     pub dest: u64,
-    pub start_msgid: u32,
-    pub end_msgid: u32,
+    pub start_hash: String,
 }
 impl Update {
     pub fn from_reader(p: update::Reader) -> Result<Self,Box<dyn Error>> {
         let src = p.get_src();
         let dest = p.get_dest();
-        let start_msgid=p.get_start_msgid();
-        let end_msgid=p.get_end_msgid();
-        return Ok(Update {src:src,dest:dest,start_msgid,end_msgid});
+        let start_hash = p.get_start_hash()?.to_string()?;
+        return Ok(Update {src,dest,start_hash});
     }
     pub fn to_capnp(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut message = Builder::new_default();
@@ -90,8 +143,7 @@ impl Update {
         let mut b = c_b.init_update();
         b.set_src(self.src);
         b.set_dest(self.dest);
-        b.set_start_msgid(self.start_msgid);
-        b.set_end_msgid(self.end_msgid);
+        b.set_start_hash(text::Reader::from(self.start_hash.as_str()));
 
         let v = serialize::write_message_to_words(&message);
 
@@ -100,6 +152,11 @@ impl Update {
     }
 }
 
+use std::time::SystemTime;
+pub fn time_now() -> u64 {
+    let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    return secs.as_secs();
+}
 
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
@@ -117,6 +174,12 @@ pub fn serialize_pubkey2(key: &Rsa<Public>) -> Vec<u8> {
 pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode;
+}
+
+//TODO: FIX
+pub fn deserialize_pubkey2(keytext: &str) -> Rsa<Public> {
+    let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
+    return to_encode.rsa().unwrap();
 }
 
 pub fn serialize_privkey(key: &Rsa<Private>) -> Vec<u8> {
@@ -142,32 +205,55 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return buf;
 }
 
-pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
+/*pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
     let mut md = Builder::new_default();
     let mut b = md.init_root::<msg_capnp::update::Builder>();
     b.set_src(src);
     b.set_dest(dest);
-    b.set_start_msgid(start_msgid);
-    b.set_end_msgid(end_msgid);
+    b.set_start_hash(text::Reader::from(start_hash.as_str()));
     let v = serialize::write_message_to_words(&md);
     return v;
-}
+}*/
 
-pub fn create_update_response(src: u64, dest:u64, chain: Vec<chain::ChainEntry>) -> Vec<u8> {
-    let mut message = Builder::new_default();
-    let mut ur = message.init_root::<msg_capnp::update_response::Builder>();
-    let mut b2 = ur.reborrow().init_bchain(chain.len() as u32);
-    let mut i:u32 = 0;
-    for ce in chain.iter() {
-        let mut ceb = ce.to_builder();
-        let ce_builder = ceb.get_root::<chain_entry::Builder>().unwrap();
-        b2.set_with_caveats(i,ce_builder.into_reader()).unwrap();
-        i+=1;
+#[derive(Debug)]
+pub struct UpdateResponse {
+    pub src:u64,
+    pub dest:u64,
+    pub start_hash: String,             // requested start hash
+    pub chain: Vec<chain::ChainEntry>,  // chain entries (maybe the whole chain)
+}
+impl UpdateResponse {
+    pub fn to_capnp(&self) -> Vec<u8> {
+        let mut message = Builder::new_default();
+        let mut ur = message.init_root::<msg_capnp::update_response::Builder>();
+        let mut b2 = ur.reborrow().init_bchain(self.chain.len() as u32);
+        let mut i:u32 = 0;
+        for ce in self.chain.iter() {
+            let mut ceb = ce.to_builder();
+            let ce_builder = ceb.get_root::<chain_entry::Builder>().unwrap();
+            b2.set_with_caveats(i,ce_builder.into_reader()).unwrap();
+            i+=1;
+        }
+        ur.reborrow().set_src(self.src);
+        ur.set_start_hash(text::Reader::from(self.start_hash.as_str()));
+        ur.set_dest(self.dest);
+        let v = serialize::write_message_to_words(&message);
+        return v;
     }
-    ur.reborrow().set_src(src);
-    ur.set_dest(dest);
-    let v = serialize::write_message_to_words(&message);
-    return v;
+    pub fn from_reader(r: update_response::Reader) -> Result<Self,Box<dyn Error>>  {
+        let mut v = vec!();
+        let src = r.get_src();
+        let dest = r.get_dest();
+        let start_hash = r.get_start_hash()?.to_string()?;
+        let bchain = r.get_bchain()?;
+        for i in 0..bchain.len() {
+            let ce_reader = bchain.get(i);
+            let ce = ChainEntry::from_reader(ce_reader)?;
+            v.push(ce);
+        }
+        return Ok(UpdateResponse {src,dest,start_hash,chain:v});
+
+    }
 }
 
 pub fn create_pong(src: u64, dest: u64,key: &Rsa<Private>, peers: Vec<String>) -> Vec<u8> {
@@ -190,6 +276,47 @@ pub mod msg_capnp {
     include!(concat!(env!("OUT_DIR"), "/msg_capnp.rs"));
 }
 
+
+pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>) -> String {
+        let verifier_pkey = PKey::from_rsa(private).unwrap();
+        //an x509 request is the certificate of the CA
+        let mut req_builder: X509ReqBuilder = X509ReqBuilder::new().unwrap();
+        req_builder.set_pubkey(&verifier_pkey).unwrap();
+        //let verifier_req: X509Req = req_builder.build();
+        //use to_pem to serialize
+
+        //Now we are going to use verifier_req to sign a certificate
+        let verified_pkey = PKey::from_rsa(public).unwrap();
+        let mut other_builder = X509ReqBuilder::new().unwrap();
+        other_builder.set_pubkey(&verified_pkey).unwrap();
+        other_builder.sign(&verifier_pkey,MessageDigest::sha384()).unwrap();
+        let verified_req: X509Req = other_builder.build();
+        return String::from_utf8(verified_req.to_pem().unwrap()).unwrap();
+
+}
+
+/*pub fn verify_signature(public: Rsa<Public>, data: String) -> bool {
+    let mut verifier = Verifier::new(MessageDigest::sha256(), &public).unwrap();
+    verifier.update(data).unwrap();
+    assert!(verifier.verify(&signature).unwrap());
+    return false;
+}*/
+
+use openssl::sign::Signer;
+use openssl::hash::MessageDigest;
+use openssl::x509::*;
+
+
+pub fn sign(private: Rsa<Private>, data: Vec<u8>) -> Vec<u8> {
+    // Generate a keypair
+    let keypair = PKey::from_rsa(private).unwrap();
+
+    // Sign the data
+    let mut signer = Signer::new(MessageDigest::sha256(), &keypair).unwrap();
+    signer.update(&data.as_slice()).unwrap();
+    let signature = signer.sign_to_vec().unwrap();
+    return signature;
+}
 
 #[cfg(test)]
 mod tests {
