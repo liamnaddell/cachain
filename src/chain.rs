@@ -9,6 +9,7 @@ use crate::*;
 
 //TODO: Format uniformly across codebase, no 2 spaces+4 spaces+etc
 
+///Calculates sha256 data hash
 pub fn calculate_data_hash(data:&Vec<u8>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data.as_slice());
@@ -28,6 +29,8 @@ pub struct CertRequest {
     pub created_time: u64,
 }
 impl CertRequest {  
+    ///Serializes the certRequest data to a string
+    //TODO: add src, created_time here
   fn to_data_string(&self) -> String {
     let mut concat = self.url.clone();
     concat.push('|');
@@ -35,6 +38,7 @@ impl CertRequest {
     return concat;
   }
   
+  ///Creates a new CertRequest for a URL (that we own)
   pub fn new(url: String) -> CertRequest {
     let mut request = CertRequest {
         src: db::get_addr(),
@@ -52,6 +56,7 @@ impl CertRequest {
     self.hash = calculate_data_hash(&data_string);
   }
 
+  ///Serializes to capnp builder
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
     let mut mb = Builder::new_default();
     let msg = mb.init_root::<msg::Builder>();
@@ -84,8 +89,6 @@ impl CertRequest {
     });
   }
 
-
-  //rustify api
   pub fn is_valid_request(&self) -> bool {
       let dsbytes = Vec::from(self.to_data_string().as_bytes());
     let hash = calculate_data_hash(&dsbytes);
@@ -93,15 +96,20 @@ impl CertRequest {
   }
 }
 
+///A challenge request sent by the verifier to the person who wants to be verified
 #[derive(Debug)]
 pub struct Challenge {
     pub src: u64,
     pub dest: u64,
+    //the challenge string
     pub chal_str: String,
+    //the time the challenge was issued (calculated by the verifier)
     pub time: u64,
 }
 
 impl Challenge {
+    ///Create a new challenge with str chal_str, with destination being the node who wants to be
+    ///verified
     pub fn new(dest: u64, chal_str: String) -> Self {
         return Challenge {
             src: db::get_addr(),
@@ -110,6 +118,7 @@ impl Challenge {
             time:time_now(),
         };
     }
+    ///Convert challenge string to capnp message
     pub fn to_msg(&self) -> Vec<u8> {
         let mut message = Builder::new_default();
         let msg_builder = message.init_root::<msg_capnp::msg::Builder>();
@@ -133,15 +142,16 @@ impl Challenge {
     }
 }
 
-//remove serde code, etc
 #[derive(Serialize,Deserialize,Clone,Debug)]
+///A serializable (to both disk and network) ChainEntry
 pub struct ChainEntry {
   pub hash: String,
   pub prev_hash: String,
+  //TODO: is this parameter useless?
   pub height: u64,
   pub signed_time: u64,
-  pub verifier_signature: Vec<u8>, // may need more info on verifier
-  pub msg_signature: Vec<u8>,      // May need to be abstracted out
+  pub verifier_signature: Vec<u8>, // TODO: may need more info on verifier
+  pub msg_signature: Vec<u8>,      // TODO: May need to be abstracted out
   pub request: CertRequest,
 }
 impl ChainEntry {
@@ -176,12 +186,10 @@ impl ChainEntry {
       msg_signature:vec!(),
       request,
     };
+    //need to update hash before we can sign the request
     entry.update_hash();
     let data = entry.to_data_string();
     entry.msg_signature=sign(priv_key,data);
-
-    
-
     return entry;
   }
 
@@ -190,6 +198,7 @@ impl ChainEntry {
     self.hash = calculate_data_hash(&data_string);
   }
 
+  ///Converts to capnp message builder
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
     let mut mb = Builder::new_default();
     let mut ce = mb.init_root::<chain_entry::Builder>();
@@ -239,6 +248,7 @@ impl ChainEntry {
     });
   }
 
+  ///Checks if a ChainEntry is the genesis block
   pub fn is_genesis(&self) -> bool {
     // TODO: update this function to compare with the real genesis block
     return self.prev_hash == "".to_string();
@@ -246,6 +256,9 @@ impl ChainEntry {
 
 }
 
+///Verifies that a blockchain entry is valid according to a couple algorithms that are not
+///implemented yet. 
+///See the functional requirements for the list of checks that need to be implemented
 pub fn verify_entry(entry: &ChainEntry, prev_entry: &ChainEntry) -> bool {
   // TODO: add consensus checks and independent verification
   if entry.prev_hash != prev_entry.hash {
@@ -255,6 +268,7 @@ pub fn verify_entry(entry: &ChainEntry, prev_entry: &ChainEntry) -> bool {
   return hash == entry.hash;
 }
 
+///Runs the verifier on the entire chain
 pub fn is_valid_chain(chain: &Vec<ChainEntry>, genesis_root: bool) -> bool {
   assert!(chain.len() > 0);
 

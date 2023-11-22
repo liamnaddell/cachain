@@ -152,12 +152,14 @@ impl Update {
     }
 }
 
+///Gets the current time
 use std::time::SystemTime;
 pub fn time_now() -> u64 {
     let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     return secs.as_secs();
 }
 
+///Serializes a pubkey to pem format
 pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
     let v = to_encode.public_key_to_pem().unwrap();
@@ -193,17 +195,19 @@ pub fn private_to_public(key: &Rsa<Private>) -> Rsa<Public> {
     return pubkey;
 }
 
+/// Generates an RSA pubkey
 pub fn generate() -> Rsa<Private> {
     let rsa = Rsa::generate(2048).unwrap();
     return rsa;
 }
 
+/*
 pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     let mut buf = vec![0; rsa.size() as usize];
     let data = b"foobar";
     let _encrypted_len = rsa.public_encrypt(data, &mut buf, Padding::PKCS1).unwrap();
     return buf;
-}
+}*/
 
 /*pub fn create_update(src: u64, dest:u64, start_msgid: u32, end_msgid:u32) -> Vec<u8> {
     let mut md = Builder::new_default();
@@ -307,6 +311,8 @@ use openssl::hash::MessageDigest;
 use openssl::x509::*;
 
 
+//Signs data using a private rsa key, returns the raw signing data, which can't be trivially
+//converted to a string.
 pub fn sign(private: Rsa<Private>, data: Vec<u8>) -> Vec<u8> {
     // Generate a keypair
     let keypair = PKey::from_rsa(private).unwrap();

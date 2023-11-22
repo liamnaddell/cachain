@@ -10,13 +10,13 @@ Instructions for running inside mininet:
 
 ## Not understood yet
 
-Code Quality???
-Ask marcelo
-Do we need a design document?
-How do we submit our code? How do we demo it?
-Testing requirements???
-How do we handle cut corners?
-Re-certification?
+* Code Quality???
+* Ask marcelo
+* Do we need a design document?
+* How do we submit our code? How do we demo it?
+* Testing requirements???
+* How do we handle cut corners?
+* Re-certification?
 
 ## Code/Formatting requirements
 

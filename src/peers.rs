@@ -11,6 +11,7 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::net::SocketAddr;
 
+///A peer with an optional open TcpStream to the peer used for broadcasting
 pub struct Peer {
     pub url: String,
     pub pub_key: Rsa<Public>,
@@ -24,6 +25,7 @@ pub struct Peer {
 
 impl Peer {
     pub fn connect(&mut self) -> Result<TcpStream, Box<dyn Error>> {
+        //We might already have a connection cached, so we can just use that
         if let Some(conn) = &self.conn {
             return Ok(conn.try_clone()?);
         } else {
@@ -40,6 +42,7 @@ impl Peer {
     pub fn new(url: String, pub_key: Rsa<Public>,addr:u64) -> Self {
         return Peer {url,pub_key,addr,conn:None};
     }
+    ///Constructs a peer using the information received in a Pong
     pub fn from_pong(url: String, p: &Pong) -> Self {
         return Peer::new(url,p.key.clone(),p.src);
     }
@@ -51,13 +54,16 @@ pub struct Peers {
     potential_peers: HashSet<String>,
     peerno: usize,
 }
+//the singleton instance of the Peers struct. Must be intialized using peers::init()
 lazy_static! {
-//static ref peer_instance: Mutex<Option<Peers>> = Mutex::new(RefCell::new(None));
 static ref PEER_INS: Mutex<Option<Peers>> = Mutex::new(None);
 }
 
 use std::ops::DerefMut;
 
+///Broadcasts a message to all the peers except the guy on the blacklist.
+/// The blacklist mechanism exists to ensure we don't send advert messages 
+/// back to the guy who just sent us the advert.
 pub fn broadcast(msg: Vec<u8>, blacklist: u64) -> Result<usize,Box<dyn Error>> {
     let mut guard = PEER_INS.lock()?;
     let option_peer = guard.deref_mut().as_mut();
@@ -65,23 +71,31 @@ pub fn broadcast(msg: Vec<u8>, blacklist: u64) -> Result<usize,Box<dyn Error>> {
     peers.broadcast(msg,blacklist)
 }
 
+/// Gets a list of urls of the peers we are currently peered with
+/// Used to craft Pong responses.
 pub fn peer_urls() -> Vec<String> {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
+
     let mut v = vec!();
     for peer in peers.peers.iter() {
         v.push(peer.url.clone());
     }
     v
 }
+
+///Adds the address (url or ip) to the potential peers list for later use by generate()
 pub fn add_potential(paddr: &str) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
+
     peers.potential_peers.insert(paddr.to_string());
 }
 
+/// Broadcasts Update messages to peers to update to a given hash. set the hash to "" to get all
+/// updates
 pub fn update_chain(hash: String) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
@@ -89,13 +103,23 @@ pub fn update_chain(hash: String) {
     peers.update_chain(hash);
 }
 
+///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging
+///the server binary)
+///peer is an optional peer to attempt to reach out to upon initialization (otherwise we fail to
+///peer with anyone, and must wait for pings before we can peer)
+///peerno is the number of peers to maintain at one time
 pub fn init(me: String, peer: Option<String>,peerno: usize) {
     {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut();
+
     let mut peers = Peers::new(me,peer,peerno);
+
+    //attempt to connect with peers
     let peerc = peers.generate();
+    //we must peer with at least one other otherwise we just crash
     assert!(peerno == 0 || peerc != 0);
+    //complete the initialization
     *option_peer = Some(peers);
     }
 }
@@ -107,10 +131,12 @@ impl Peers {
         let mut i = 0;
         if self.peers.len() == 0 {
             println!("[Peers::broadcast] no peers available, generating more");
+            //we have no peers, so we attempt to reach out to more using the potential_peers list
             let newpeers = self.generate();
             assert!(newpeers != 0);
         }
         for peer in self.peers.iter_mut()  {
+            //don't broadcast to person on blacklist (usually the guy who just sent us an advert)
             if peer.addr == blacklist {
                 continue;
             }
@@ -121,18 +147,25 @@ impl Peers {
         return Ok(i);
     }
     pub fn update_chain(&mut self, hash: String) {
+        //TODO: fix this deadbeef. This can be done by crafting a unique update message to each
+        //peer, then using peer.addr inside the Peers struct.
         let upd = Update {src: db::get_addr(), dest: 0xdeadbeef,start_hash: hash};
         let msg = upd.to_capnp().unwrap();
         //TODO: DELETE UNWRAPS, MUST BE DONE BEFORE SUBMISSION
         //TODO: REFACTOR broadcast API to NOT RETURN RESULTS!!!
         //TODO: REFACTOR capnp serialization API to NOT RETURN RESULTS!!!
+
+
+        //Broadcast the update to all the peers 
         self.broadcast(msg,0).unwrap();
+        //loop through the peers looking for UpdateResponses.
         for peer in self.peers.iter_mut() {
             let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new()).unwrap();
             let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>().unwrap();
                     //TODO: VALIDATE!
                     let upd = UpdateResponse::from_reader(msg_reader).unwrap();
                     println!("Received update_response from inside peers: {:?}",upd);
+                    //fast-forward chain using received data
                     let succ = db::fast_forward(upd.chain);
                     if !succ {
                         panic!("Cannot add new entries :sadge:2");
@@ -147,15 +180,23 @@ impl Peers {
             }
             hs
         };
+        //we need to figure out our own ip address, that way we don't later attempt to peer with
+        //ourselves.
         println!("[peers] resolving own hostname: {}",&me);
         let mut addrs = me.to_socket_addrs().unwrap();
+        //this indicates to the user that they don't actually own the domain they are trying to
+        //start a server on
         let socket = addrs.next().ok_or("resolution failed").unwrap();
         let peers = Peers{me: socket, peers:vec!(),potential_peers:hs,peerno:peerno};
 
         return peers;
     }
+    ///This function attempts to enter a peer relation with another node in the potential_peers
+    ///list
     pub fn generate_peer(&mut self) -> Result<(),Box<dyn Error>> {
+        //get the url from the potential_peers list
         let url:String = {
+            //TODO: Return error here instead of Ok
             if self.potential_peers.len() == 0 {
                 println!("[generate_peer] exhausted the potential_peers list");
                 return Ok(());
@@ -165,27 +206,39 @@ impl Peers {
                 peer
             }
         };
+        //perform dns resolution to get the IP address
         let addrs = url.to_socket_addrs();
         let mut socket = addrs?.next().ok_or("resolution failed")?;
         socket.set_port(8069);
         println!("Attempting to enter peership with {:?}",socket);
+
+
+        //check that we don't try to peer to ourselves
         if socket == self.me {
             return Err(Box::<dyn Error + Send + Sync>::from("Not peering to self"));
         }
+
+        //intitialize connection and send ping
         let mut stream = TcpStream::connect(socket)?;
         let ping = {
             Ping {src:db::get_addr(),dest:0,key:private_to_public(&db::get_key())}
         };
         let msg_ping = ping.to_msg()?;
-
         stream.write(&msg_ping)?;
+
+        //read pong to get information back.
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
         let pong_msg = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
         let pong = Pong::from_reader(pong_msg)?;
+        //handshake has completed :)
         println!("[peers] Entered peership with {}",&url);
+        //We store the IP address in the peers struct instead of the url. If you need the URL, you
+        //can use the blockchain to get it by searching-by-addr. This can be re-designed later.
         let sa = format!("{:?}",socket);
         let peer = Peer::from_pong(sa,&pong);
         self.peers.push(peer);
+        //loop through our new peer's list of peers, and add them to the potential list in case we
+        //need to add more peers later.
         for pong_peer in pong.peers.iter() {
             let mut already_peered_w = false;
             for current_peer in &self.peers {
@@ -201,6 +254,8 @@ impl Peers {
         }
         return Ok(());
     }
+
+    ///attempt to generate peerno peers by performing handshakes
     pub fn generate(&mut self) -> usize {
         let mut count = 0;
         for _ in 0..self.peerno {
