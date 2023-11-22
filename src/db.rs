@@ -20,11 +20,16 @@ pub struct DB {
 
 use rand::random;
 impl DB {
+    ///Generates a new db with a new pkey and a random address
     pub fn new() -> DB {
         let v = vec!();
         let pkey = generate();
         return DB { chain: v, pkey: pkey, addr:random()};
     }
+    ///Appends chain to our chain, returning false if the chains are incompatible
+    ///Chains are incompatable when the prev_hash and previous node's hash do not match. 
+    ///A more complicated algorithm is required to be implemnented,
+    ///See functional requirements for more info.
     pub fn fast_forward(&mut self, chain: Vec<ChainEntry>) -> bool {
         if self.chain.len() == 0 {
             self.chain=chain;
@@ -56,6 +61,7 @@ impl DB {
     }
 
     /// Return the hash of the last chain entry.
+    /// Returns None if there is no chain yet.
     pub fn get_tip_hash(&self) -> Option<String> {
         if self.chain.len() == 0 {
             return None;
@@ -71,6 +77,7 @@ fn to_disk_db() -> DiskDB {
     let v = serialize_privkey(&db.pkey);
     return DiskDB { chain: db.chain.clone(), pkey:v,addr:db.addr};
 }
+
 fn from_disk_db(ddb: DiskDB) {
     let keydata = ddb.pkey;
     let pkey = PKey::private_key_from_pkcs8(&keydata).unwrap();
@@ -81,6 +88,7 @@ fn from_disk_db(ddb: DiskDB) {
     *option_db=Some(db);
 }
 
+///A version of the database that can be serialized to disk.
 #[derive(Serialize, Deserialize)]
 struct DiskDB {
     chain: Vec<ChainEntry>,
@@ -88,18 +96,20 @@ struct DiskDB {
     addr:u64,
 }
 
-//cache commonly required data to avoid lock contention+deadlocks
+///cache commonly required data to avoid lock contention+deadlocks
 #[derive(Debug)]
 struct StaticInfo {
     pub key: Rsa<Private>,
     pub addr: u64,
 }
 
+//static variable that can only be written to once. This code is used to store our private key and
+//our network address.
 use std::sync::OnceLock;
 static S_DATA: OnceLock<StaticInfo> = OnceLock::new();
 
 use std::path::Path;
-//creates DB if it doesn't exist
+///Loads database from file, otherwise creates a new database using DB::new()
 pub fn load_db(file: &str) {
     if !Path::new(&file).exists() {
         println!("Creating new db");
@@ -117,7 +127,9 @@ pub fn load_db(file: &str) {
     }
     init_static_data();
 }
-pub fn init_static_data() {
+
+//Initializes static data, called by load_db
+fn init_static_data() {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     let data = StaticInfo {
@@ -146,6 +158,7 @@ pub fn get_chain() -> Vec<ChainEntry> {
     return db.chain.clone();
 }
 
+///Find block matching hash in database, returns None if no ChainEntry is found.
 pub fn find_hash(hash: &str) -> Option<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
@@ -157,6 +170,7 @@ pub fn find_hash(hash: &str) -> Option<ChainEntry> {
     return None;
 }
 
+/// Find all chain entries with url field `domain`
 pub fn find_by_domain(domain: &String) -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
@@ -169,12 +183,14 @@ pub fn find_by_domain(domain: &String) -> Vec<ChainEntry> {
     return v;
 }
 
+///get the tail of the chain starting at start_hash, returns empty if start_hash is invalid
 pub fn get_tail(start_hash: &str) -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     return db.get_tail(start_hash);
 }
 
+///Returns tail of chain (unless chain is empty)
 pub fn get_tip_hash() -> Option<String> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
@@ -190,6 +206,7 @@ pub struct NodeInfo {
     pub addr: u64,
 }
 
+/// Reads the chain to determine who is the verifer for an incoming ChainEntry.
 pub fn current_elector() -> NodeInfo {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
@@ -200,12 +217,17 @@ pub fn current_elector() -> NodeInfo {
     let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:0};
     return ni;
 }
+
+/// Add ChainEntries to the blockchain, returning false if the incoming ChainEntries are
+/// incompatible with the existing chain.
 pub fn fast_forward(v: Vec<ChainEntry>) -> bool {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
     return db.fast_forward(v);
 }
 
+///Generates a new genesis block with our info and url as the root of the blockchain.
+///Self-signs our URL+key using a key who's info is thrown out when the function exits.
 pub fn generate_new_genesis(url: String) {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
