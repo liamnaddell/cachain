@@ -1,4 +1,5 @@
 use cachain::*;
+use cachain::peers::Peer;
 use std::net::{SocketAddr, TcpListener};
 use std::io::Write;
 use capnp::serialize;
@@ -19,8 +20,16 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             //If they sent a ping, send a pong back on the same channel
             contents::Ping(ping_reader) => {
                 let ping = Ping::from_reader(ping_reader?)?;
-                let ip = stream.peer_addr()?.to_string();
-                peers::add_potential(&ip);
+                let mut socket = stream.peer_addr()?;
+                socket.set_port(8069);
+                
+                // add peer as a proper peer
+                let peer_url = format!("{:?}",socket);
+                let peer = Peer::from_ping(peer_url.clone(),&ping);
+                peers::add_peer(peer);
+                println!("[peers] Entered peership with {}", &peer_url);
+                
+                // send back potential peers
                 let peers = peers::peer_urls();
                 let pong = create_pong(db::get_addr(),ping.src,&key,peers);
                 stream.write(&pong)?;
@@ -41,6 +50,8 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                 println!("Sending response: {:?}",update);
                 stream.write(&update_r)?;
             }
+            // Issue: at the moment, we handle UpdateResponse when we handle Advert(CE)
+            //    so we will never hit this code unless UpdateResponse got sent without us requesting
             //If we receive UpdateResponse, record the info
             contents::UpdateResponse(up_rdr) => {
                 let upd = UpdateResponse::from_reader(up_rdr?)?;
@@ -52,6 +63,8 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                 ) { 
                     panic!("Received invalid update :sadge:1");
                 }
+                // TODO: if this is a whole chain, then we need to handle the
+                // fork case
                 let succ = db::fast_forward(upd.chain);
                 if !succ {
                     panic!("Cannot add new entries :sadge:2");
@@ -62,11 +75,16 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                 let cer = Challenge::from_reader(ce_reader?)?;
                 println!("Received challenge: {:?}",cer);
                 //TODO: George fix
+
+                // forward challenge
+                let blacklist = cer.src;
+                let forwarding_msg = cer.to_msg();
+                peers::broadcast(forwarding_msg, blacklist)?;
             }
             //If we receive an advert, send a request on a new channel (Adverts are broadcasted on
             //write-only lines)
             contents::Advert(adv_reader) => {
-                let adv = Advert::from_reader(adv_reader?)?;
+                let mut adv = Advert::from_reader(adv_reader?)?;
                 println!("Received advert: {:?}",adv);
                 match &adv.kind {
                     AdvertKind::CE(hash) => {
@@ -81,7 +99,16 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                                 }
                             };
                             println!("Updating chain from peers");
-                            peers::update_chain(hash);
+                            
+                            // Perform update request/response to the sender of advert
+                            peers::update_chain(hash, adv.src);
+
+                            // forward the advert to other peers
+                            let blacklist = adv.src;
+                            // Special case: update src to self, so peers can send update request to us
+                            adv.src = db::get_addr();     
+                            let forwarding_msg = adv.to_msg()?;
+                            peers::broadcast(forwarding_msg, blacklist)?;
                         }
                     }
                     //If we received a cert reqeust, check if we are the elector, or just broadcast
@@ -96,21 +123,13 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                             peers::broadcast(chal.to_msg(),0)?;
                         }
 
-                        let privkey = db::get_key();
-                        let pubkey = deserialize_pubkey2(&cr.requester_pubkey);
-                        let sign = x509_sign(key,pubkey);
-
-
-                        let ph = db::get_tip_hash().unwrap();
-                        let new_ce = ChainEntry::new(ph,69420,time_now(),sign.into(),privkey,cr.clone());
-                        db::fast_forward(vec!(new_ce.clone()));
-                        //TODO: Actually perform verification
-                        let аллилуиа = Advert::mint_new_block(cr.src,&new_ce.hash);
-                        let msg = аллилуиа.to_msg()?;
-                        //TODO: FIX
-                        peers::broadcast(msg,0)?;
                         //TODO: need to store this cert request in memory... somewhere
                         //      and remove it when a chain entry containing it is received
+                        
+                        // forward cert request to other peers
+                        let blacklist = adv.src;
+                        let forwarding_msg = adv.to_msg()?;
+                        peers::broadcast(forwarding_msg, blacklist)?;
                     }
                 }
             }
@@ -133,7 +152,7 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     let ce = CertRequest::new(domain);
     //TODO: add real thing in here
     //
-    let msg_builder = ce.to_builder();
+    let msg_builder = ce.to_advert_builder();
     let msg = serialize::write_message_to_words(&msg_builder);
     peers::broadcast(msg,0)?;
     return Ok(());
