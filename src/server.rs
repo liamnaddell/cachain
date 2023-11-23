@@ -1,15 +1,24 @@
 use cachain::*;
 use std::net::{SocketAddr, TcpListener};
-use std::io::Write;
+use std::io::{self, Write};
 use capnp::serialize;
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
 use std::env;
 use std::thread;
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::{Arc, RwLock};
+use tokio::io::{copy, sink, AsyncWriteExt};
+use tokio_rustls::TlsAcceptor;
+use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
+use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::BigNum};
 use cachain::chain::*;
+use tokio::runtime::Runtime;
 
-fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
+
+fn handle_conn(mut stream: TcpStream, tx: &Sender<String>) -> Result<(),Box<dyn Error>> {
     loop {
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new())?;
         let msg_reader = reader.get_root::<msg_capnp::msg::Reader>()?;
@@ -61,7 +70,7 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             contents::Challenge(ce_reader) => {
                 let cer = Challenge::from_reader(ce_reader?)?;
                 println!("Received challenge: {:?}",cer);
-                //TODO: George fix
+                tx.send(cer.chal_str.clone());
             }
             //If we receive an advert, send a request on a new channel (Adverts are broadcasted on
             //write-only lines)
@@ -139,6 +148,99 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     return Ok(());
 }
 
+async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Error> {
+    let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
+    let now = Asn1Time::from_unix(time_now() as i64).unwrap();
+    let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
+    let mut x509 = X509::builder()?;
+    x509.set_not_before(&now)?;
+    x509.set_not_after(&year_from_now)?;
+    x509.set_serial_number(&(BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap()))?;
+    let mut x509_name = X509NameBuilder::new()?;
+    x509_name.append_entry_by_text("C", "CA")?;
+    x509_name.append_entry_by_text("O", "cachain")?;
+    x509_name.append_entry_by_text("CN", "domain")?;
+    let x509_name = x509_name.build();
+    //TODO: Fix unwrap
+    x509.set_issuer_name(&x509_name).unwrap();
+    x509.set_subject_name(&x509_name).unwrap();
+
+    // x509.set_issuer_name("cachain");
+    x509.set_pubkey(&PKey::from_rsa(db::get_key()).unwrap());
+    x509.sign(&PKey::from_rsa(db::get_key()).unwrap(), openssl::hash::MessageDigest::md5());
+
+    let x509 = CertificateDer::from(x509.build().to_der().unwrap());
+    let mut x509_chain = Vec::new();
+    x509_chain.push(x509);
+    let config = rustls::ServerConfig::builder()
+    .with_safe_defaults()
+    .with_no_client_auth()
+    .with_single_cert(x509_chain, key)
+    .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)).unwrap();
+
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8443").await?;
+    let mut challenge_str = String::from("null");
+    loop {
+        challenge_str = (c_chal_lock.read().unwrap()).clone();
+        let (stream, peer_addr) = listener.accept().await?;
+        // let mut stream = stream.unwrap();
+        let acceptor = acceptor.clone();
+        let fut = async move {
+            let mut stream = acceptor.accept(stream).await?;
+
+            let status_line = "HTTP/1.1 200 OK";
+            let contents = challenge_str.clone();
+            let length = contents.len();
+            let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+            stream.write_all(response.as_bytes()).await?;
+            stream.shutdown().await?;
+            println!("Hello: {}", peer_addr);
+            Ok(()) as io::Result<()>
+        };
+
+        tokio::spawn(async move {
+            if let Err(err) = fut.await {
+                eprintln!("{:?}", err);
+            }
+        });
+    }
+    Ok(()) as io::Result<()>
+}
+
+fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+    let chal_lock = Arc::new(RwLock::new(String::from("none")));
+    let c_chal_lock = Arc::clone(&chal_lock);
+    thread::spawn(move || {
+        loop {
+            let new_chal = rx.recv().unwrap();
+            let mut chal_str = chal_lock.write().unwrap();
+            println!("{}", new_chal);
+            *chal_str = new_chal;
+        }
+    });
+
+    /*
+    // TODO: fix domain lifetime stuff
+    thread::spawn(move || {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(https_thread(c_chal_lock));
+    });
+    // thread::spawn(move || {
+    */
+    let rt  = Runtime::new()?;
+    thread::spawn(move || {
+        let res = rt.block_on(https_thread(c_chal_lock));
+        if let Err(e) = res {
+            println!("[https_thread] Error from block_on {}",e);
+        }
+    });
+    return Ok(());
+}
+
 fn main() -> Result<(),Box<dyn Error>> {
     let (domain,peer,peerno) = {
         let args:Vec<String> = env::args().collect();
@@ -157,6 +259,10 @@ fn main() -> Result<(),Box<dyn Error>> {
     };
     db::load_db("server_db.json");
     peers::init(domain.clone()+":8069",peer.clone(),peerno);
+    let (tx, rx) = channel::<String>();
+    setup_https_server_thread(&domain, rx)?;
+    tx.send(String::from("testerov")).unwrap();
+    
     //TODO: FF chain
     if peer == None {
         println!("Creating new genesis from {domain}");
@@ -176,7 +282,7 @@ fn main() -> Result<(),Box<dyn Error>> {
     for sstream in listener.incoming() {
         let stream = sstream?;
         println!("Received connection");
-        let maybe_error = handle_conn(stream);
+        let maybe_error = handle_conn(stream, &tx);
         if let Err(e) = maybe_error {
             println!("connection ended with error: {}",e);
         }
