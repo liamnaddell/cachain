@@ -112,6 +112,18 @@ pub fn update_chain(hash: String, data_src: u64) {
     peers.update_chain(hash, data_src);
 }
 
+/// Intial block download
+pub fn initial_chain_download() {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    
+    // For now, we will only retrieve the first peer's chain
+    // Later implementation may retrieve from multiple peers
+    let src_addr = peers.peers.first().unwrap().addr;
+    peers.update_chain("".to_string(), src_addr);
+}
+
 ///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging
 ///the server binary)
 ///peer is an optional peer to attempt to reach out to upon initialization (otherwise we fail to

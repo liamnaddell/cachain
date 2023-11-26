@@ -11,6 +11,7 @@ use std::thread;
 use cachain::chain::*;
 
 fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
+    // Need timeout in for this loop
     loop {
         let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new())?;
         let msg_reader = reader.get_root::<msg_capnp::msg::Reader>()?;
@@ -85,7 +86,7 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
             //write-only lines)
             contents::Advert(adv_reader) => {
                 let mut adv = Advert::from_reader(adv_reader?)?;
-                println!("Received advert: {:?}",adv);
+                println!("Received advert: {:#?}",adv);
                 match &adv.kind {
                     AdvertKind::CE(hash) => {
                         let maybe_hash = db::find_hash(hash);
@@ -114,7 +115,7 @@ fn handle_conn(mut stream: TcpStream) -> Result<(),Box<dyn Error>> {
                     //If we received a cert reqeust, check if we are the elector, or just broadcast
                     //the message
                     AdvertKind::CR(cr)  => {
-                        println!("Received cert request: {:?}",cr);
+                        println!("Received cert request: {:#?}",cr);
                         let ni = db::current_elector();
                         if ni.addr == db::get_addr() {
                             let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
@@ -176,11 +177,15 @@ fn main() -> Result<(),Box<dyn Error>> {
     };
     db::load_db("server_db.json");
     peers::init(domain.clone()+":8069",peer.clone(),peerno);
-    //TODO: FF chain
+
     if peer == None {
         println!("Creating new genesis from {domain}");
         db::generate_new_genesis(domain);
     } else {
+        // Intial chain download
+        println!("Intial chain downloading...");
+        peers::initial_chain_download();
+
         //thread for verifying the server
         thread::spawn(move || {
             let res = verifier_thread(domain);
@@ -195,10 +200,15 @@ fn main() -> Result<(),Box<dyn Error>> {
     for sstream in listener.incoming() {
         let stream = sstream?;
         println!("Received connection");
-        let maybe_error = handle_conn(stream);
-        if let Err(e) = maybe_error {
-            println!("connection ended with error: {}",e);
-        }
+        // spawn a thread to handle the connection
+        thread::spawn(move || {
+            let maybe_error = handle_conn(stream);
+            if let Err(e) = maybe_error {
+                println!("connection ended with error: {}",e);
+            } else {
+                println!("connection ended succesfully");
+            }
+        });
     }
     return Ok(());
 }
