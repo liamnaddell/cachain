@@ -8,6 +8,8 @@ use std::env;
 const MY_ADDR: u64 = 10203;
 
 fn main() -> Result<(),Box<dyn Error>> {
+    akdlkfasdlkjfljksjslf;
+    //todo: fix argparsing
     let args: Vec<String> = env::args().collect();
     let peer = {
         if args.len() == 1 {

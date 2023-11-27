@@ -35,6 +35,11 @@ impl DB {
             self.chain=chain;
             return true;
         }
+        //todo:this guy needs to be modified to be able to merge the following chains:
+        //a->b->c
+        //a->b->c->d
+        //currently this donsn't work
+        adlksfaljdsfjkalsfdlkjsf
         for new_head in chain.iter() {
             let head = &self.chain[self.chain.len()-1];
             if head.hash == new_head.prev_hash {
@@ -210,11 +215,17 @@ pub struct NodeInfo {
 pub fn current_elector() -> NodeInfo {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
+    //shouldn't call current_elector on an empty chain (doy)
     assert!(db.chain.len() != 0);
-    let head = &db.chain[db.chain.len()-1];
-    let req = &head.request;
-    //TODO: Fix this
-    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:0};
+
+    let tiph = db.get_tip_hash().unwrap();
+    let randint: usize = tiph.as_bytes().iter().fold(0,|acc,y| acc+(*y as usize));
+    let chainlen = db.chain.len();
+    //yes, this isn't evenly distributed, no it doesn't matter.
+    let entryno = randint % chainlen;
+    let entry = &db.chain[entryno];
+    let req = &entry.request;
+    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:req.src};
     return ni;
 }
 

@@ -83,7 +83,6 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
             contents::Challenge(ce_reader) => {
                 let cer = Challenge::from_reader(ce_reader?)?;
                 println!("Received challenge: {:?}",cer);
-                //TODO: George fix
                 tx.send(cer.chal_str.clone());
 
                 // forward challenge
@@ -111,6 +110,8 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             println!("Updating chain from peers");
                             
                             // Perform update request/response to the sender of advert
+                            asdkjfaljsdfjlk
+                                //TODO: Don't send advert unless updating chain succeeds :(
                             peers::update_chain(hash, adv.src);
 
                             // forward the advert to other peers
@@ -131,6 +132,18 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             println!("Created challenge: {:?}",chal);
                             //TODO: Fix this api w/ real values + better func
                             peers::broadcast(chal.to_msg(),0)?;
+                            //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
+                            let privkey = db::get_key();
+                            let pubkey = deserialize_pubkey2(&cr.requester_pubkey);
+                            let sign = x509_sign(key,pubkey);
+
+
+                            let ph = db::get_tip_hash().unwrap();
+                            let new_ce = ChainEntry::new(ph,69420,time_now(),sign.into(),privkey,cr.clone());
+                            db::fast_forward(vec!(new_ce.clone()));
+                            let аллилуиа = Advert::mint_new_block(cr.src,&new_ce.hash);
+                            let msg = аллилуиа.to_msg()?;
+                            peers::broadcast(msg,0)?;
                         }
 
                         //TODO: need to store this cert request in memory... somewhere
@@ -262,6 +275,8 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
 }
 
 fn main() -> Result<(),Box<dyn Error>> {
+    akjdsflakdsfkjadslkj
+    //fix argparsing
     let (domain,peer,peerno) = {
         let args:Vec<String> = env::args().collect();
         if args.len() < 2 {
@@ -301,6 +316,8 @@ fn main() -> Result<(),Box<dyn Error>> {
             }
         });
     }
+    aslkjdfalkjdsfjlkakjfd
+        //TODO: Create update thread
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;

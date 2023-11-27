@@ -155,6 +155,9 @@ impl Challenge {
     }
 }
 
+akdsljfaskjfdlkalsjf
+//derive display and remove debug
+
 #[derive(Serialize,Deserialize,Clone,Debug)]
 ///A serializable (to both disk and network) ChainEntry
 pub struct ChainEntry {
