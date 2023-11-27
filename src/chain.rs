@@ -41,7 +41,7 @@ impl CertRequest {
   ///Creates a new CertRequest for a URL (that we own)
   pub fn new(url: String) -> CertRequest {
     let mut request = CertRequest {
-        src: db::get_addr(),
+      src: db::get_addr(),
       hash: "".to_string(),
       url,
       requester_pubkey:String::from_utf8(serialize_pubkey(&db::get_key())).unwrap(),
@@ -56,8 +56,20 @@ impl CertRequest {
     self.hash = calculate_data_hash(&data_string);
   }
 
-  ///Serializes to capnp builder
+  //Serializes to a capnp builder
   pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
+    let mut mb = Builder::new_default();
+    let mut cr = mb.init_root::<cert_request::Builder>();
+    cr.set_hash(TextReader::from(self.hash.as_str()));
+    cr.set_url(TextReader::from(self.url.as_str()));
+    cr.set_req_pubkey(TextReader::from(self.requester_pubkey.as_str()));
+    cr.set_req_time(self.created_time);
+
+    return mb;
+  }
+
+  ///Serializes to an advert capnp builder
+  pub fn to_advert_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
     let mut mb = Builder::new_default();
     let msg = mb.init_root::<msg::Builder>();
     let cts = msg.init_contents();
@@ -65,6 +77,7 @@ impl CertRequest {
     adv.set_src(db::get_addr());
     let adv_kind = adv.reborrow().init_kind();
     let mut cr = adv_kind.init_cr();
+    cr.set_src(self.src);
     cr.set_hash(TextReader::from(self.hash.as_str()));
     cr.set_url(TextReader::from(self.url.as_str()));
     cr.set_req_pubkey(TextReader::from(self.requester_pubkey.as_str()));

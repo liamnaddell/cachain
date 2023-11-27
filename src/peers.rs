@@ -46,13 +46,16 @@ impl Peer {
     pub fn from_pong(url: String, p: &Pong) -> Self {
         return Peer::new(url,p.key.clone(),p.src);
     }
+    pub fn from_ping(url: String, p: &Ping) -> Self {
+        return Peer::new(url,p.key.clone(),p.src);
+    }
 }
 
 pub struct Peers {
     me: SocketAddr,
     peers: Vec<Peer>,
     potential_peers: HashSet<String>,
-    peerno: usize,
+    peerno: usize,         // desired original number of peers
 }
 //the singleton instance of the Peers struct. Must be intialized using peers::init()
 lazy_static! {
@@ -93,14 +96,32 @@ pub fn add_potential(paddr: &str) {
 
     peers.potential_peers.insert(paddr.to_string());
 }
-
-/// Broadcasts Update messages to peers to update to a given hash. set the hash to "" to get all
-/// updates
-pub fn update_chain(hash: String) {
+pub fn add_peer(peer: Peer) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
-    peers.update_chain(hash);
+    peers.peers.push(peer);
+}
+
+/// Broadcasts Update messages to peers to update to a given hash. set the hash to "" to get all
+/// updates
+pub fn update_chain(hash: String, data_src: u64) {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    peers.update_chain(hash, data_src);
+}
+
+/// Intial block download
+pub fn initial_chain_download() {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    
+    // For now, we will only retrieve the first peer's chain
+    // Later implementation may retrieve from multiple peers
+    let src_addr = peers.peers.first().unwrap().addr;
+    peers.update_chain("".to_string(), src_addr);
 }
 
 ///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging
@@ -140,13 +161,24 @@ impl Peers {
             if peer.addr == blacklist {
                 continue;
             }
-            println!("[peers] broadcasting to {}",&peer.url);
+            println!("[peers] broadcasting to {}, blacklisting {}",&peer.url, blacklist);
             peer.send_msg(&msg)?;
             i+=1;
         }
         return Ok(i);
     }
-    pub fn update_chain(&mut self, hash: String) {
+    
+    pub fn unicast(&mut self, msg: Vec<u8>, dest: u64) -> Option<&mut Peer> {
+        let mut ret = None;
+        for peer in self.peers.iter_mut() {
+            if peer.addr == dest {
+                peer.send_msg(&msg).unwrap();
+                ret = Some(peer);
+            }
+        }
+        return ret;
+    }
+    pub fn update_chain(&mut self, hash: String, data_src: u64) {
         //TODO: fix this deadbeef. This can be done by crafting a unique update message to each
         //peer, then using peer.addr inside the Peers struct.
         let upd = Update {src: db::get_addr(), dest: 0xdeadbeef,start_hash: hash};
@@ -154,23 +186,31 @@ impl Peers {
         //TODO: DELETE UNWRAPS, MUST BE DONE BEFORE SUBMISSION
         //TODO: REFACTOR broadcast API to NOT RETURN RESULTS!!!
         //TODO: REFACTOR capnp serialization API to NOT RETURN RESULTS!!!
-
-
-        //Broadcast the update to all the peers 
-        self.broadcast(msg,0).unwrap();
-        //loop through the peers looking for UpdateResponses.
-        for peer in self.peers.iter_mut() {
+        
+        let dest = self.unicast(msg,data_src);
+        if dest.is_none() {
+            println!("[peers] update_chain: no peer found for data_src {}",data_src);
+            return;
+        } else {
+            // Read update response from data source
+            let peer = dest.unwrap();
             let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new()).unwrap();
             let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>().unwrap();
-                    //TODO: VALIDATE!
-                    let upd = UpdateResponse::from_reader(msg_reader).unwrap();
-                    println!("Received update_response from inside peers: {:?}",upd);
-                    //fast-forward chain using received data
-                    let succ = db::fast_forward(upd.chain);
-                    if !succ {
-                        panic!("Cannot add new entries :sadge:2");
-                    }
-                }
+            let upd = UpdateResponse::from_reader(msg_reader).unwrap();
+            println!("Received update_response from inside peers: {:?}",upd);
+            
+            // TODO: need more validation / verification
+            if !chain::is_valid_chain(
+                &upd.chain,
+                upd.start_hash != upd.chain[0].hash
+            ) { 
+                panic!("Received invalid update :sadge:1");
+            }
+            let succ = db::fast_forward(upd.chain);
+            if !succ {
+                panic!("Cannot add new entries :sadge:2");
+            }
+        }
     }
     pub fn new(me: String, peer: Option<String>,peerno: usize) -> Self {
         let hs = {
@@ -187,7 +227,12 @@ impl Peers {
         //this indicates to the user that they don't actually own the domain they are trying to
         //start a server on
         let socket = addrs.next().ok_or("resolution failed").unwrap();
-        let peers = Peers{me: socket, peers:vec!(),potential_peers:hs,peerno:peerno};
+        let peers = Peers{
+            me: socket, 
+            peers:vec!(),
+            potential_peers:hs,
+            peerno:peerno
+        };
 
         return peers;
     }
