@@ -5,6 +5,7 @@ use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::ops::{Deref,DerefMut};
+use std::cmp::min;
 
 
 
@@ -35,11 +36,6 @@ impl DB {
             self.chain=chain;
             return true;
         }
-        //todo:this guy needs to be modified to be able to merge the following chains:
-        //a->b->c
-        //a->b->c->d
-        //currently this donsn't work
-        adlksfaljdsfjkalsfdlkjsf
         for new_head in chain.iter() {
             let head = &self.chain[self.chain.len()-1];
             if head.hash == new_head.prev_hash {
@@ -49,6 +45,44 @@ impl DB {
             }
         }
         return true;
+    }
+    ///If we have two chains:
+    ///  A->B->C->D
+    ///        C->D->E->F
+    ///Produce the following chain:
+    ///  A->B->C->D->E->F
+    pub fn merge_compatible(&mut self, chain: Vec<ChainEntry>) -> bool {
+        assert!(self.chain.len() != 0);
+        let mut max = min(chain.len(),self.chain.len());
+        let them = chain[0].hash;
+        //iterate through to first shared entry
+        let mut i = 0;
+        //beginning index where these chains share an entry
+        let mut begindex: isize =-1;
+        for us in self.chain.iter() {
+            if us.hash == them {
+                begindex=i;
+                break;
+            }
+            i+=1;
+        }
+        //these chains have no common entries, incompatible
+        if begindex == -1 {
+            return false;
+        }
+        let mut begindex = begindex as usize;
+        //skip common entries so we can fast-forward
+        let mut usindex=begindex;
+        let mut themindex=0;
+        while self.chain[usindex].hash == chain[themindex].hash {
+            usindex+=1;
+            themindex+=1;
+            if themindex == max {
+                //the incoming chain is a subset of our current chain, no FF required
+                return true;
+            }
+        }
+        self.fast_forward(chain[themindex..].to_vec())
     }
 
     /// Return the tail of the chain starting from and including the
@@ -150,13 +184,11 @@ pub fn get_key() -> Rsa<Private> {
     return sd.key.clone();
 }
 
-//TODO: This is also stupid, put this data in read-only structure somewhere else with no mutex
 pub fn get_addr() -> u64 {
     let sd = S_DATA.get().unwrap();
     return sd.addr;
 }
 
-//TODO: THIS IS REALLY DUMB
 pub fn get_chain() -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
@@ -204,7 +236,6 @@ pub fn get_tip_hash() -> Option<String> {
 
 
 //all the info one might need to know about a peer/non-peer
-//TODO: merge with Peer struct
 pub struct NodeInfo {
     pub url: String,
     pub key: Rsa<Public>,
@@ -213,6 +244,8 @@ pub struct NodeInfo {
 
 /// Reads the chain to determine who is the verifer for an incoming ChainEntry.
 pub fn current_elector() -> NodeInfo {
+    adskjfalkdsfjkl
+    //TOOD: premote based off of senority, handle unresponsive verifier/mutliple cert requests
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     //shouldn't call current_elector on an empty chain (doy)
@@ -225,7 +258,7 @@ pub fn current_elector() -> NodeInfo {
     let entryno = randint % chainlen;
     let entry = &db.chain[entryno];
     let req = &entry.request;
-    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:req.src};
+    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(&req.requester_pubkey),addr:req.src};
     return ni;
 }
 
@@ -235,6 +268,11 @@ pub fn fast_forward(v: Vec<ChainEntry>) -> bool {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
     return db.fast_forward(v);
+}
+pub fn merge_compatible(chain: Vec<ChainEntry>) -> bool {
+    let mut guard = DB_I.lock().unwrap();
+    let db = guard.deref_mut().as_mut().expect("should be initialized");
+    return db.merge_compatible(chain);
 }
 
 ///Generates a new genesis block with our info and url as the root of the blockchain.

@@ -146,8 +146,7 @@ pub fn init(me: String, peer: Option<String>,peerno: usize) {
 }
 
 impl Peers {
-    //TODO: Guarantee messages are sent to at least one peer and generate peers if there are none
-    //returns the number of peers the message was broadcasted to
+    ///returns the number of peers the message was broadcasted to
     pub fn broadcast(&mut self, msg: Vec<u8>, blacklist: u64) -> Result<usize,Box<dyn Error>> {
         let mut i = 0;
         if self.peers.len() == 0 {
@@ -178,26 +177,17 @@ impl Peers {
         }
         return ret;
     }
-    pub fn update_chain(&mut self, hash: String, data_src: u64) {
-        //TODO: fix this deadbeef. This can be done by crafting a unique update message to each
-        //peer, then using peer.addr inside the Peers struct.
-        let upd = Update {src: db::get_addr(), dest: 0xdeadbeef,start_hash: hash};
+    pub fn update_chain(&mut self, hash: String, data_src: u64) -> Result<(),Box<dyn Error>> {
+        let upd = Update {src: db::get_addr(), dest: data_src,start_hash: hash};
         let msg = upd.to_capnp().unwrap();
-        //TODO: DELETE UNWRAPS, MUST BE DONE BEFORE SUBMISSION
-        //TODO: REFACTOR broadcast API to NOT RETURN RESULTS!!!
-        //TODO: REFACTOR capnp serialization API to NOT RETURN RESULTS!!!
-        
         let dest = self.unicast(msg,data_src);
-        if dest.is_none() {
-            println!("[peers] update_chain: no peer found for data_src {}",data_src);
-            return;
-        } else {
+        if let Some(peer) = dest {
             // Read update response from data source
-            let peer = dest.unwrap();
-            let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new()).unwrap();
-            let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>().unwrap();
-            let upd = UpdateResponse::from_reader(msg_reader).unwrap();
-            println!("Received update_response from inside peers: {:?}",upd);
+            // can unwrap() here because unicast called send_msg() which opens a connection
+            let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new())?;
+            let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>()?;
+            let upd = UpdateResponse::from_reader(msg_reader)?;
+            println!("Received update_response from inside peers: {}",upd);
             
             // TODO: need more validation / verification
             if !chain::is_valid_chain(
@@ -206,11 +196,14 @@ impl Peers {
             ) { 
                 panic!("Received invalid update :sadge:1");
             }
-            let succ = db::fast_forward(upd.chain);
+            let succ = db::merge_compatible(upd.chain);
             if !succ {
                 panic!("Cannot add new entries :sadge:2");
             }
-        }
+        } else {
+            panic!("[peers] update_chain: no peer found for data_src {}",data_src);
+        } 
+        return Ok(());
     }
     pub fn new(me: String, peer: Option<String>,peerno: usize) -> Self {
         let hs = {
@@ -241,10 +234,8 @@ impl Peers {
     pub fn generate_peer(&mut self) -> Result<(),Box<dyn Error>> {
         //get the url from the potential_peers list
         let url:String = {
-            //TODO: Return error here instead of Ok
             if self.potential_peers.len() == 0 {
-                println!("[generate_peer] exhausted the potential_peers list");
-                return Ok(());
+                return Err("[generate_peer] exhausted the potential_peers list".into());
             } else {
                 let peer = self.potential_peers.iter().next().expect("there's at least 1 peer, but no next element").clone();
                 self.potential_peers.remove(&peer);

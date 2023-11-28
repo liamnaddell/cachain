@@ -23,9 +23,8 @@ impl Ping {
         let src = p.get_src();
         let dest = p.get_dest();
         let keytext = p.get_key()?.to_string()?;
-        let key = deserialize_pubkey(keytext);
-        let rsa_key = key.rsa()?;
-        return Ok(Ping {src:src,dest:dest,key:rsa_key,});
+        let key = deserialize_pubkey(&keytext);
+        return Ok(Ping {src:src,dest:dest,key:key,});
     }
     pub fn to_msg(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut md = Builder::new_default();
@@ -59,8 +58,7 @@ impl Pong {
         let src = p.get_src();
         let dest = p.get_dest();
         let keytext = p.get_key()?.to_string()?;
-        let key = deserialize_pubkey(keytext);
-        let rsa_key = key.rsa()?;
+        let rsa_key = deserialize_pubkey(&keytext);
         let mut peers = vec!();
         for peer in p.get_peers()?.iter() {
             peers.push(peer?.to_string()?);
@@ -166,20 +164,19 @@ pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     return v;
 }
 
-//TODO: fix this stupid
 pub fn serialize_pubkey2(key: &Rsa<Public>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
     let v = to_encode.public_key_to_pem().unwrap();
     return v;
 }
 
-pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
+/*pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode;
-}
+}*/
 
 //TODO: FIX
-pub fn deserialize_pubkey2(keytext: &str) -> Rsa<Public> {
+pub fn deserialize_pubkey(keytext: &str) -> Rsa<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode.rsa().unwrap();
 }
@@ -219,12 +216,21 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return v;
 }*/
 
-#[derive(Debug)]
 pub struct UpdateResponse {
     pub src:u64,
     pub dest:u64,
     pub start_hash: String,             // requested start hash
     pub chain: Vec<chain::ChainEntry>,  // chain entries (maybe the whole chain)
+}
+use std::fmt;
+impl fmt::Display for UpdateResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "UpdateResponse {{ src: {}, dest: {}, start_hash: {}, chain: {{" , self.src,self.dest,self.start_hash)?;
+        for ce in self.chain.iter() {
+            write!(f,"{}, ",ce)?;
+        }
+        write!(f,"}} }}")
+    }
 }
 impl UpdateResponse {
     pub fn to_capnp(&self) -> Vec<u8> {
@@ -252,7 +258,7 @@ impl UpdateResponse {
         let bchain = r.get_bchain()?;
         for i in 0..bchain.len() {
             let ce_reader = bchain.get(i);
-            let ce = ChainEntry::from_reader(ce_reader)?;
+            let ce = chain::ChainEntry::from_reader(ce_reader)?;
             v.push(ce);
         }
         return Ok(UpdateResponse {src,dest,start_hash,chain:v});

@@ -7,7 +7,6 @@ use capnp::text::Reader as TextReader;
 use crate::*;
 
 
-//TODO: Format uniformly across codebase, no 2 spaces+4 spaces+etc
 
 ///Calculates sha256 data hash
 pub fn calculate_data_hash(data:&Vec<u8>) -> String {
@@ -18,7 +17,6 @@ pub fn calculate_data_hash(data:&Vec<u8>) -> String {
 }
 
 
-//TODO: Delete serde code here
 //make requester pubkey not a string
 #[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct CertRequest {
@@ -29,11 +27,11 @@ pub struct CertRequest {
     pub created_time: u64,
 }
 impl CertRequest {  
-    ///Serializes the certRequest data to a string
-    //TODO: add src, created_time here
+   ///Serializes the certRequest data to a string
   fn to_data_string(&self) -> String {
     let mut concat = self.url.clone();
     concat.push('|');
+    concat.push_str(&format!("{}|{}",self.src,self.created_time));
     concat.push_str(&self.requester_pubkey);
     return concat;
   }
@@ -155,20 +153,22 @@ impl Challenge {
     }
 }
 
-akdsljfaskjfdlkalsjf
-//derive display and remove debug
-
-#[derive(Serialize,Deserialize,Clone,Debug)]
+#[derive(Serialize,Deserialize,Clone)]
 ///A serializable (to both disk and network) ChainEntry
 pub struct ChainEntry {
   pub hash: String,
   pub prev_hash: String,
-  //TODO: is this parameter useless?
   pub height: u64,
   pub signed_time: u64,
-  pub verifier_signature: Vec<u8>, // TODO: may need more info on verifier
-  pub msg_signature: Vec<u8>,      // TODO: May need to be abstracted out
+  pub verifier_signature: Vec<u8>,
+  pub msg_signature: Vec<u8>,
   pub request: CertRequest,
+}
+use std::fmt;
+impl fmt::Display for ChainEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ChainEntry {{ hash: {}, prev_hash: {}, signed_time: {}, verifier_signature: {}, msg_signature: {}, request: {:?} }}" , self.hash,self.prev_hash,self.signed_time,self.verifier_signature.len(),self.msg_signature.len(),self.request)
+    }
 }
 impl ChainEntry {
   fn to_data_string(&self) -> Vec<u8> {

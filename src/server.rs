@@ -74,6 +74,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                 }
                 // TODO: if this is a whole chain, then we need to handle the
                 // fork case
+                lkjajlaksf
                 let succ = db::fast_forward(upd.chain);
                 if !succ {
                     panic!("Cannot add new entries :sadge:2");
@@ -130,7 +131,8 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         if ni.addr == db::get_addr() {
                             let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
                             println!("Created challenge: {:?}",chal);
-                            //TODO: Fix this api w/ real values + better func
+                            //TODO: mask person who sent us the cert request
+                            aklsfjkaldsfjakflskfj
                             peers::broadcast(chal.to_msg(),0)?;
                             //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
                             let privkey = db::get_key();
@@ -146,9 +148,6 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             peers::broadcast(msg,0)?;
                         }
 
-                        //TODO: need to store this cert request in memory... somewhere
-                        //      and remove it when a chain entry containing it is received
-                        
                         // forward cert request to other peers
                         let blacklist = adv.src;
                         let forwarding_msg = adv.to_msg()?;
@@ -173,8 +172,8 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     }
     println!("[verifier_thread] Creating CertRequest to become verified");
     let ce = CertRequest::new(domain);
-    //TODO: add real thing in here
-    //
+    //TODO: Fix the logic bugs with verifier_thread
+    aksdfljaskjfd
     let msg_builder = ce.to_advert_builder();
     let msg = serialize::write_message_to_words(&msg_builder);
     peers::broadcast(msg,0)?;
@@ -194,22 +193,21 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     x509_name.append_entry_by_text("O", "cachain")?;
     x509_name.append_entry_by_text("CN", "domain")?;
     let x509_name = x509_name.build();
-    //TODO: Fix unwrap
-    x509.set_issuer_name(&x509_name).unwrap();
-    x509.set_subject_name(&x509_name).unwrap();
+    x509.set_issuer_name(&x509_name);
+    x509.set_subject_name(&x509_name);
 
     // x509.set_issuer_name("cachain");
-    x509.set_pubkey(&PKey::from_rsa(db::get_key()).unwrap());
-    x509.sign(&PKey::from_rsa(db::get_key()).unwrap(), openssl::hash::MessageDigest::md5());
+    x509.set_pubkey(&PKey::from_rsa(db::get_key()));
+    x509.sign(&PKey::from_rsa(db::get_key())?, openssl::hash::MessageDigest::md5());
 
-    let x509 = CertificateDer::from(x509.build().to_der().unwrap());
+    let x509 = CertificateDer::from(x509.build().to_der()?);
     let mut x509_chain = Vec::new();
     x509_chain.push(x509);
     let config = rustls::ServerConfig::builder()
     .with_safe_defaults()
     .with_no_client_auth()
     .with_single_cert(x509_chain, key)
-    .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)).unwrap();
+    .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8443").await?;
@@ -217,7 +215,6 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     loop {
         challenge_str = (c_chal_lock.read().unwrap()).clone();
         let (stream, peer_addr) = listener.accept().await?;
-        // let mut stream = stream.unwrap();
         let acceptor = acceptor.clone();
         let fut = async move {
             let mut stream = acceptor.accept(stream).await?;
@@ -253,17 +250,6 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
         }
     });
 
-    /*
-    // TODO: fix domain lifetime stuff
-    thread::spawn(move || {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(https_thread(c_chal_lock));
-    });
-    // thread::spawn(move || {
-    */
     let rt  = Runtime::new()?;
     thread::spawn(move || {
         let res = rt.block_on(https_thread(c_chal_lock));
@@ -276,7 +262,7 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
 
 fn main() -> Result<(),Box<dyn Error>> {
     akjdsflakdsfkjadslkj
-    //fix argparsing
+    //fix argparsing,add option for only in-memory database
     let (domain,peer,peerno) = {
         let args:Vec<String> = env::args().collect();
         if args.len() < 2 {

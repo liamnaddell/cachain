@@ -33,6 +33,8 @@ fn main() -> Result<(),Box<dyn Error>> {
     stream.write(&msg_ping)?;
 
     let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
+    //TODO: add update thread
+    aljdsfaljksfdj
 
     //TODO: add pong info to running list of peers
     let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
@@ -42,6 +44,8 @@ fn main() -> Result<(),Box<dyn Error>> {
     let update = Update {src:MY_ADDR,dest:pong.get_src(),start_hash:"".to_string()};
     let msg_update = update.to_capnp()?;
 
+    //TODO: Add option for maintaining list of currently valid ca certificates
+    asdjkfaldsjfjalkdf
     stream.write(&msg_update)?;
     let reader2 = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
     let update_response = reader2.get_root::<msg_capnp::update_response::Reader>()?;
