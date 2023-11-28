@@ -11,8 +11,8 @@ use std::thread;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{Arc, RwLock};
-use tokio::io::{copy, sink, AsyncWriteExt};
-use tokio_rustls::TlsAcceptor;
+use tokio::io::{copy, split, sink, stdin as tokio_stdin, stdout as tokio_stdout, AsyncWriteExt};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
 use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::BigNum};
 use cachain::chain::*;
@@ -127,10 +127,20 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         println!("Received cert request: {:#?}",cr);
                         let ni = db::current_elector();
                         if ni.addr == db::get_addr() {
-                            let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
+                            let chalstr = "この気持ちはまだそっとしまっておきたい".to_string();
+                            let chal = Challenge::new(cr.src,chalstr.clone());
                             println!("Created challenge: {:?}",chal);
-                            //TODO: Fix this api w/ real values + better func
+                            let cr2 = cr.clone();
+                            let rt  = Runtime::new()?;
                             peers::broadcast(chal.to_msg(),0)?;
+                            //thread::spawn(move || {
+                                // test by "verifying" ourselves
+                                let res = rt.block_on(verify_challenge(cr2,chalstr));
+                                if let Err(e) = res {
+                                    println!("[verify_challenge] Error from block_on {}",e);
+                                }
+                            //});
+                            //TODO: Fix this api w/ real values + better func
                         }
 
                         //TODO: need to store this cert request in memory... somewhere
@@ -168,26 +178,31 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     return Ok(());
 }
 
-async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Error> {
+async fn https_thread(c_chal_lock: Arc<RwLock<String>>, domain: &str) -> Result<(),std::io::Error> {
     let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
     let now = Asn1Time::from_unix(time_now() as i64).unwrap();
     let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
     let mut x509 = X509::builder()?;
+    x509.set_version(2)?;
     x509.set_not_before(&now)?;
     x509.set_not_after(&year_from_now)?;
     x509.set_serial_number(&(BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap()))?;
     let mut x509_name = X509NameBuilder::new()?;
-    x509_name.append_entry_by_text("C", "CA")?;
-    x509_name.append_entry_by_text("O", "cachain")?;
-    x509_name.append_entry_by_text("CN", "domain")?;
+    // x509_name.append_entry_by_text("C", "CA")?;
+    // x509_name.append_entry_by_text("O", "cachain")?;
+    x509_name.append_entry_by_text("CN", "cachain-ca")?;
     let x509_name = x509_name.build();
     //TODO: Fix unwrap
     x509.set_issuer_name(&x509_name).unwrap();
+    let mut x509_name = X509NameBuilder::new()?;
+    // x509_name.append_entry_by_text("C", "CA")?;
+    // x509_name.append_entry_by_text("O", "cachain")?;
+    x509_name.append_entry_by_text("CN", "cachain")?;
+    let x509_name = x509_name.build();
     x509.set_subject_name(&x509_name).unwrap();
 
-    // x509.set_issuer_name("cachain");
     x509.set_pubkey(&PKey::from_rsa(db::get_key()).unwrap());
-    x509.sign(&PKey::from_rsa(db::get_key()).unwrap(), openssl::hash::MessageDigest::md5());
+    x509.sign(&PKey::from_rsa(db::get_key()).unwrap(), openssl::hash::MessageDigest::sha384());
 
     let x509 = CertificateDer::from(x509.build().to_der().unwrap());
     let mut x509_chain = Vec::new();
@@ -198,13 +213,13 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     .with_single_cert(x509_chain, key)
     .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)).unwrap();
 
+    println!("[https_thread] starting https server listener!!!!");
     let acceptor = TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8443").await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8443").await?;
     let mut challenge_str = String::from("null");
     loop {
         challenge_str = (c_chal_lock.read().unwrap()).clone();
         let (stream, peer_addr) = listener.accept().await?;
-        // let mut stream = stream.unwrap();
         let acceptor = acceptor.clone();
         let fut = async move {
             let mut stream = acceptor.accept(stream).await?;
@@ -221,7 +236,7 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
 
         tokio::spawn(async move {
             if let Err(err) = fut.await {
-                eprintln!("{:?}", err);
+                eprintln!("[https_thread]: {:?}", err);
             }
         });
     }
@@ -240,25 +255,84 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
         }
     });
 
-    /*
-    // TODO: fix domain lifetime stuff
-    thread::spawn(move || {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(https_thread(c_chal_lock));
-    });
-    // thread::spawn(move || {
-    */
+    let domain = Arc::new(String::from(domain));
     let rt  = Runtime::new()?;
     thread::spawn(move || {
-        let res = rt.block_on(https_thread(c_chal_lock));
+        let res = rt.block_on(https_thread(c_chal_lock, &domain));
         if let Err(e) = res {
             println!("[https_thread] Error from block_on {}",e);
         }
     });
     return Ok(());
+}
+
+async fn verify_challenge(req: CertRequest, challenge_str: String) -> io::Result<()> {
+    let domain = req.url;
+    let content = format!("GET / HTTP/1.1\r\nHost: {}\r\n\r\n", domain);
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    // wtf do we put in root store
+    let mut x509 = X509::builder()?;
+    let now = Asn1Time::from_unix(time_now() as i64).unwrap();
+    let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
+    x509.set_not_before(&now)?;
+    x509.set_not_after(&year_from_now)?;
+    x509.set_version(2);
+    x509.set_serial_number(&(BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap()))?;
+    let mut x509_name = X509NameBuilder::new()?;
+    // x509_name.append_entry_by_text("C", "CA")?;
+    // x509_name.append_entry_by_text("O", "cachain")?;
+    x509_name.append_entry_by_text("CN", "vchal-ca")?;
+
+    let x509_name = x509_name.build();
+    x509.set_issuer_name(&x509_name)?;
+
+    let mut x509_name = X509NameBuilder::new()?;
+    // x509_name.append_entry_by_text("C", "CA")?;
+    // x509_name.append_entry_by_text("O", "cachain")?;
+    x509_name.append_entry_by_text("CN", "vcachain")?;
+
+    let x509_name = x509_name.build();
+    x509.set_subject_name(&x509_name)?;
+
+    x509.set_pubkey(&PKey::from_rsa(db::get_key()).unwrap());
+    x509.sign(&PKey::from_rsa(db::get_key()).unwrap(), openssl::hash::MessageDigest::sha384());
+    let x509 = CertificateDer::from(x509.build().to_der().unwrap());
+
+    root_cert_store.add(x509);
+
+    // root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_cert_store)
+        .with_no_client_auth();
+
+    let connector = TlsConnector::from(Arc::new(config));
+
+    println!("[verify_challenge] connecting to {}:8443",domain);
+    let stream = tokio::net::TcpStream::connect(format!("{}:8443", domain)).await?;
+
+    let domain = rustls::ServerName::try_from(domain.as_str())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))?;
+
+    let mut stream = connector.connect(domain, stream).await?;
+
+    let (mut stdin, mut stdout) = (tokio_stdin(), tokio_stdout());
+
+    stream.write_all(content.as_bytes()).await?;
+
+    let (mut reader, mut writer) = split(stream);
+
+    tokio::select! {
+        ret = copy(&mut reader, &mut stdout) => {
+            ret?;
+        },
+        ret = copy(&mut stdin, &mut writer) => {
+            ret?;
+            writer.shutdown().await?
+        }
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<(),Box<dyn Error>> {
@@ -281,6 +355,10 @@ fn main() -> Result<(),Box<dyn Error>> {
     peers::init(domain.clone()+":8069",peer.clone(),peerno);
     let (tx, rx) = channel::<String>();
     setup_https_server_thread(&domain, rx)?;
+    use std::time;
+    thread::sleep(time::Duration::from_secs(1));
+
+    // test pipe
     tx.send(String::from("testerov")).unwrap();
     
     if peer == None {
@@ -301,6 +379,9 @@ fn main() -> Result<(),Box<dyn Error>> {
             }
         });
     }
+
+
+
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;

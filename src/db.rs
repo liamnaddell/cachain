@@ -214,7 +214,7 @@ pub fn current_elector() -> NodeInfo {
     let head = &db.chain[db.chain.len()-1];
     let req = &head.request;
     //TODO: Fix this
-    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:0};
+    let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(req.requester_pubkey.clone()).rsa().unwrap(),addr:db.addr};
     return ni;
 }
 
