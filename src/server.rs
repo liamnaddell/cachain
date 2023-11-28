@@ -56,7 +56,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                     chain:db::get_tail(&update.start_hash),
                 };
                 let update_r = update.to_capnp();
-                println!("Sending response: {:?}",update);
+                println!("Sending response: {}",update);
                 stream.write(&update_r)?;
             }
             // Issue: at the moment, we handle UpdateResponse when we handle Advert(CE)
@@ -64,7 +64,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
             //If we receive UpdateResponse, record the info
             contents::UpdateResponse(up_rdr) => {
                 let upd = UpdateResponse::from_reader(up_rdr?)?;
-                println!("Received update_response: {:?}",upd);
+                println!("Received update_response: {}",upd);
                 //TODO: MORE Validation for security, etc
                 if !chain::is_valid_chain(
                     &upd.chain,
@@ -127,7 +127,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                     //the message
                     AdvertKind::CR(cr)  => {
                         println!("Received cert request: {:#?}",cr);
-                        let ni = db::current_elector();
+                        let ni = db::current_elector(&cr);
                         if ni.addr == db::get_addr() {
                             let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
                             println!("Created challenge: {:?}",chal);
@@ -136,7 +136,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             peers::broadcast(chal.to_msg(),0)?;
                             //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
                             let privkey = db::get_key();
-                            let pubkey = deserialize_pubkey2(&cr.requester_pubkey);
+                            let pubkey = deserialize_pubkey(&cr.requester_pubkey);
                             let sign = x509_sign(key,pubkey);
 
 
@@ -198,7 +198,8 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
 
     // x509.set_issuer_name("cachain");
     x509.set_pubkey(&PKey::from_rsa(db::get_key()));
-    x509.sign(&PKey::from_rsa(db::get_key())?, openssl::hash::MessageDigest::md5());
+    let x509_keyref = PKey::from_rsa(db::get_key())?
+    x509.sign(&x509_keyref), openssl::hash::MessageDigest::md5());
 
     let x509 = CertificateDer::from(x509.build().to_der()?);
     let mut x509_chain = Vec::new();

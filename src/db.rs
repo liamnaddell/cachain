@@ -46,6 +46,13 @@ impl DB {
         }
         return true;
     }
+    pub fn get_elector_seed(&self, cr: &CertRequest) -> u64 {
+        let tiph = self.get_tip_hash().expect("Shouldn't be called on 0-size blockchain");
+        let randint = tiph.as_bytes().iter().fold(0,|acc,y| acc+(*y as u64)) 
+            + cr.created_time;
+        return randint;
+
+    }
     ///If we have two chains:
     ///  A->B->C->D
     ///        C->D->E->F
@@ -54,13 +61,13 @@ impl DB {
     pub fn merge_compatible(&mut self, chain: Vec<ChainEntry>) -> bool {
         assert!(self.chain.len() != 0);
         let mut max = min(chain.len(),self.chain.len());
-        let them = chain[0].hash;
+        let them = &chain[0].hash;
         //iterate through to first shared entry
         let mut i = 0;
         //beginning index where these chains share an entry
         let mut begindex: isize =-1;
         for us in self.chain.iter() {
-            if us.hash == them {
+            if &us.hash == them {
                 begindex=i;
                 break;
             }
@@ -243,19 +250,101 @@ pub struct NodeInfo {
 }
 
 /// Reads the chain to determine who is the verifer for an incoming ChainEntry.
-pub fn current_elector() -> NodeInfo {
-    adskjfalkdsfjkl
-    //TOOD: premote based off of senority, handle unresponsive verifier/mutliple cert requests
+/// We can consider the chain to be a probability space, and by choosing a random* (see note below)
+/// number, we can pick an entry from the chain, who will become the verifer.
+/// We also want to bias the number towards senority, so we will pick a linear distribution, with 
+/// $\sum^\infty_0 p(x)dx=1$ as is expected for any discrete/continuous distribution, where p(x) is
+/// the probability any individual chainentry is picked
+/// The way we bias towards senority is as follows:
+/// Consider a chain with n entries, we chose that the root of che chain will be R times as likely to
+/// become the verifier than it would under a uniform distribution.
+/// We then choose that the tip of the chain has a 0% probability of becoming the verifier.
+/// We then linearly interpolate the relative probability that each node becomes the verifier.
+/// To make this discrete, let node 1 get 5 tickets, node 2 get 4, node 3 gets 3, node 2 gets 2,
+/// and node 1 gets 1. then, we take our random number, modulo it by 5+4+3+2+1=15, to get our
+/// answer.
+/// ----------------------------------
+///           5 \
+/// # of tick 3  -------\
+///  ets      1          --------\
+///             N1      N2       N3 
+///                 node number
+///----------------------------------
+///
+/// We then sum the tickets, then use the random number modulo sum as our answer (this excludes the
+/// tip of the chain!)
+///
+///
+/// * about those random numbers.
+/// Everybody needs to agree on who the verifier is, that way elections work properly.
+/// However, we also must acommodate that some verifiers won't do their job, so different cert
+/// requests should get different verifiers. As such, some unique property of the current state of
+/// the chain, + the current CertRequest should uniquely determine the verifier. 
+/// We will use the time the CertRequest was created, plus, the bytes of the current tip of the
+/// chain, to determine who the verifier is. 
+/// A note on the weakness of the protocol:
+/// by allowing the requester to influence who verifies them, we open ourselves up to collusion
+/// between nodes, which is the worst case protocol scenario. Ideally, we would be able to avoid
+/// this, however, this protocol is a proof-of-concept, not the final iteration.
+/// This deficiency could be fixed either by changing the election function, or by introducing
+/// multiple verifiers. Introducing multiple verifiers would make it nearly-impossible to collude,
+/// even if you are able to bias selection by choosing a specific time to issue the CertRequest.
+pub fn current_elector(cr: &CertRequest) -> NodeInfo {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     //shouldn't call current_elector on an empty chain (doy)
     assert!(db.chain.len() != 0);
 
+
     let tiph = db.get_tip_hash().unwrap();
-    let randint: usize = tiph.as_bytes().iter().fold(0,|acc,y| acc+(*y as usize));
-    let chainlen = db.chain.len();
-    //yes, this isn't evenly distributed, no it doesn't matter.
-    let entryno = randint % chainlen;
+    let randint: u64 = db.get_elector_seed(cr);
+    let n = db.chain.len();
+
+    //the number of tickets node 1 gets
+    let first_guy_tickets=5.0;
+
+    //node numbers go from 1 (root of chain) to n (tip)
+    //this closure is the number of tickets a node gets
+    let f = |x: usize| -> f64 {
+        let x = x as f64;
+        let n = n as f64;
+        let factor = {
+            if x != n {
+                n/n-x
+            } else {
+                0.0
+            }
+        };
+        first_guy_tickets/factor
+    };
+
+    //there's obviously a better way of doing this, I can't figure it out at the moment
+    let total_tickets = (1..n).map(f).sum::<f64>() as u64;
+
+    //I'm aware this isn't an even distribution, this modulo biases towards senority
+    let winner_ticket = randint % total_tickets;
+
+    //TODO: Find a better way if we have time, this algorithm should be O(1) instead its O(n),
+    //where n is the length of the chain, which will only work for relatively short chains
+    let winner_ce_number = {
+        let mut sum = 0.0;
+        let mut res = None;
+        for i in 1..n {
+            if (sum as u64) == winner_ticket {
+                res=Some(i);
+                break;
+            }
+            sum+=f(i);
+        }
+        res
+    };
+    //this computation should *literally* never fail
+    let winner_ce_number=winner_ce_number.unwrap();
+
+    //casting to a usize is safe here because the length of the chain will never be larger than a
+    //32 bit integer, because there will never be 4 billion websites (i.e. more websites than ipv4 addresses)
+    //plus there will likely be no more than 100 of these on our chain if we really go ham on testing.
+    let entryno = winner_ce_number as usize;
     let entry = &db.chain[entryno];
     let req = &entry.request;
     let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(&req.requester_pubkey),addr:req.src};

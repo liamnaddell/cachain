@@ -17,7 +17,6 @@ pub fn calculate_data_hash(data:&Vec<u8>) -> String {
 }
 
 
-//make requester pubkey not a string
 #[derive(Serialize,Deserialize,Clone,Debug)]
 pub struct CertRequest {
     pub src: u64,

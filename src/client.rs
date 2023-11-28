@@ -34,12 +34,12 @@ fn main() -> Result<(),Box<dyn Error>> {
 
     let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
     //TODO: add update thread
-    aljdsfaljksfdj
+    aljdsfaljksfdj;
 
     //TODO: add pong info to running list of peers
     let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
     println!("{:?}",pong);
-    deserialize_pubkey(pong.get_key()?.to_string()?);
+    deserialize_pubkey(&pong.get_key()?.to_string()?);
 
     let update = Update {src:MY_ADDR,dest:pong.get_src(),start_hash:"".to_string()};
     let msg_update = update.to_capnp()?;
