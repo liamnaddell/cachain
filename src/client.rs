@@ -33,7 +33,6 @@ fn main() -> Result<(),Box<dyn Error>> {
     let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();*/
 
     /*
-    //TODO: add pong info to running list of peers
     let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
     println!("{:?}",pong);
     deserialize_pubkey(&pong.get_key()?.to_string()?);
