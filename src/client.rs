@@ -3,22 +3,23 @@ use std::net::{ToSocketAddrs,TcpStream};
 use capnp::serialize;
 use std::io::Write;
 use std::error::Error;
-use std::env;
+use clap::Parser;
 
 const MY_ADDR: u64 = 10203;
 
+#[derive(Parser)]
+struct Args {
+    #[arg(short,long,default_value_t = false)]
+    in_memory: bool,
+    peer: String,
+}
+
+
+
 fn main() -> Result<(),Box<dyn Error>> {
-    akdlkfasdlkjfljksjslf;
-    //todo: fix argparsing
-    let args: Vec<String> = env::args().collect();
-    let peer = {
-        if args.len() == 1 {
-            "127.0.0.1:8069".to_string()
-        } else {
-            let stri = args[1].clone()+":8069";
-            stri
-        }
-    };
+    let args = Args::parse();
+    let peer = args.peer;
+
     db::load_db("client_db.json");
     println!("{}",peer);
     let mut addrs = peer.to_socket_addrs().unwrap();
@@ -34,7 +35,7 @@ fn main() -> Result<(),Box<dyn Error>> {
 
     let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
     //TODO: add update thread
-    aljdsfaljksfdj;
+    peers::start_update_thread(Some(peer));
 
     //TODO: add pong info to running list of peers
     let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
@@ -45,7 +46,6 @@ fn main() -> Result<(),Box<dyn Error>> {
     let msg_update = update.to_capnp()?;
 
     //TODO: Add option for maintaining list of currently valid ca certificates
-    asdjkfaldsjfjalkdf
     stream.write(&msg_update)?;
     let reader2 = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
     let update_response = reader2.get_root::<msg_capnp::update_response::Reader>()?;

@@ -1,8 +1,10 @@
 use cachain::*;
+use cachain::chain::*;
 use cachain::peers::Peer;
 use std::net::{SocketAddr, TcpListener};
-use std::io::{self, Write};
+use std::io::Write;
 use capnp::serialize;
+use std::io;
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
@@ -11,12 +13,12 @@ use std::thread;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{Arc, RwLock};
-use tokio::io::{copy, sink, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio_rustls::TlsAcceptor;
 use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
 use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::BigNum};
-use cachain::chain::*;
 use tokio::runtime::Runtime;
+use clap::Parser;
 
 
 fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn Error>> {
@@ -59,8 +61,10 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                 println!("Sending response: {}",update);
                 stream.write(&update_r)?;
             }
-            // Issue: at the moment, we handle UpdateResponse when we handle Advert(CE)
+            // 
+            // TODO: Issue, at the moment, we handle UpdateResponse when we handle Advert(CE)
             //    so we will never hit this code unless UpdateResponse got sent without us requesting
+            //    note: re-assess after Update thread is completed
             //If we receive UpdateResponse, record the info
             contents::UpdateResponse(up_rdr) => {
                 let upd = UpdateResponse::from_reader(up_rdr?)?;
@@ -74,7 +78,6 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                 }
                 // TODO: if this is a whole chain, then we need to handle the
                 // fork case
-                lkjajlaksf
                 let succ = db::fast_forward(upd.chain);
                 if !succ {
                     panic!("Cannot add new entries :sadge:2");
@@ -84,7 +87,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
             contents::Challenge(ce_reader) => {
                 let cer = Challenge::from_reader(ce_reader?)?;
                 println!("Received challenge: {:?}",cer);
-                tx.send(cer.chal_str.clone());
+                tx.send(cer.chal_str.clone())?;
 
                 // forward challenge
                 let blacklist = cer.src;
@@ -111,8 +114,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             println!("Updating chain from peers");
                             
                             // Perform update request/response to the sender of advert
-                            asdkjfaljsdfjlk
-                                //TODO: Don't send advert unless updating chain succeeds :(
+                            //TODO: Don't send advert unless updating chain succeeds :(
                             peers::update_chain(hash, adv.src);
 
                             // forward the advert to other peers
@@ -132,7 +134,6 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
                             println!("Created challenge: {:?}",chal);
                             //TODO: mask person who sent us the cert request
-                            aklsfjkaldsfjakflskfj
                             peers::broadcast(chal.to_msg(),0)?;
                             //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
                             let privkey = db::get_key();
@@ -173,7 +174,6 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     println!("[verifier_thread] Creating CertRequest to become verified");
     let ce = CertRequest::new(domain);
     //TODO: Fix the logic bugs with verifier_thread
-    aksdfljaskjfd
     let msg_builder = ce.to_advert_builder();
     let msg = serialize::write_message_to_words(&msg_builder);
     peers::broadcast(msg,0)?;
@@ -193,13 +193,13 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     x509_name.append_entry_by_text("O", "cachain")?;
     x509_name.append_entry_by_text("CN", "domain")?;
     let x509_name = x509_name.build();
-    x509.set_issuer_name(&x509_name);
-    x509.set_subject_name(&x509_name);
+    x509.set_issuer_name(&x509_name)?;
+    x509.set_subject_name(&x509_name)?;
 
     // x509.set_issuer_name("cachain");
-    x509.set_pubkey(&PKey::from_rsa(db::get_key()));
-    let x509_keyref = PKey::from_rsa(db::get_key())?
-    x509.sign(&x509_keyref), openssl::hash::MessageDigest::md5());
+    let x509_keyref = PKey::from_rsa(db::get_key())?;
+    x509.set_pubkey(&x509_keyref)?;
+    x509.sign(&x509_keyref, openssl::hash::MessageDigest::md5())?;
 
     let x509 = CertificateDer::from(x509.build().to_der()?);
     let mut x509_chain = Vec::new();
@@ -212,7 +212,7 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8443").await?;
-    let mut challenge_str = String::from("null");
+    let mut challenge_str;//= String::from("null");
     loop {
         challenge_str = (c_chal_lock.read().unwrap()).clone();
         let (stream, peer_addr) = listener.accept().await?;
@@ -236,10 +236,10 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
             }
         });
     }
-    Ok(()) as io::Result<()>
 }
 
-fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+fn setup_https_server_thread(_domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+    //TODO: Use domain
     let chal_lock = Arc::new(RwLock::new(String::from("none")));
     let c_chal_lock = Arc::clone(&chal_lock);
     thread::spawn(move || {
@@ -261,9 +261,17 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
     return Ok(());
 }
 
+#[derive(Parser)]
+struct Args {
+    #[arg(short,long,default_value_t = false)]
+    in_memory: bool,
+    peer: String,
+}
+
+
 fn main() -> Result<(),Box<dyn Error>> {
-    akjdsflakdsfkjadslkj
-    //fix argparsing,add option for only in-memory database
+    let _args = Args::parse();
+    //TODO: fix argparsing,add option for only in-memory database
     let (domain,peer,peerno) = {
         let args:Vec<String> = env::args().collect();
         if args.len() < 2 {
@@ -280,7 +288,7 @@ fn main() -> Result<(),Box<dyn Error>> {
         }
     };
     db::load_db("server_db.json");
-    peers::init(domain.clone()+":8069",peer.clone(),peerno);
+    peers::init(Some(domain.clone()+":8069"),peer.clone(),peerno);
     let (tx, rx) = channel::<String>();
     setup_https_server_thread(&domain, rx)?;
     tx.send(String::from("testerov")).unwrap();
@@ -303,7 +311,7 @@ fn main() -> Result<(),Box<dyn Error>> {
             }
         });
     }
-    aslkjdfalkjdsfjlkakjfd
+    peers::start_update_thread(peer);
         //TODO: Create update thread
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {

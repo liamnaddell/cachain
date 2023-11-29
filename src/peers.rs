@@ -10,6 +10,25 @@ use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::net::SocketAddr;
+use std::thread;
+use std::time;
+
+pub fn start_update_thread(rootpeer:Option<String>) {
+    //TODO: Handle the case where we are the root peer
+    thread::spawn(|| {
+        update_thread(rootpeer.unwrap());
+    });
+}
+
+///A thread that periodically attempts to get updates from peers
+fn update_thread(rootpeer: String) {
+    //Ping+pong n=5 peers
+    peers::init(None,Some(rootpeer),5);
+    loop {
+        std::thread::sleep(time::Duration::from_secs(100));
+        peers::update_chain("".to_string(),0xdeadbeef);
+    }
+}
 
 ///A peer with an optional open TcpStream to the peer used for broadcasting
 pub struct Peer {
@@ -52,7 +71,7 @@ impl Peer {
 }
 
 pub struct Peers {
-    me: SocketAddr,
+    me: Option<SocketAddr>,
     peers: Vec<Peer>,
     potential_peers: HashSet<String>,
     peerno: usize,         // desired original number of peers
@@ -109,7 +128,8 @@ pub fn update_chain(hash: String, data_src: u64) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
-    peers.update_chain(hash, data_src);
+    //TODO: Address unwrap()
+    peers.update_chain(hash, data_src).unwrap();
 }
 
 /// Intial block download
@@ -121,7 +141,8 @@ pub fn initial_chain_download() {
     // For now, we will only retrieve the first peer's chain
     // Later implementation may retrieve from multiple peers
     let src_addr = peers.peers.first().unwrap().addr;
-    peers.update_chain("".to_string(), src_addr);
+    //TODO: Address unwrap()
+    peers.update_chain("".to_string(), src_addr).unwrap();
 }
 
 ///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging
@@ -129,7 +150,12 @@ pub fn initial_chain_download() {
 ///peer is an optional peer to attempt to reach out to upon initialization (otherwise we fail to
 ///peer with anyone, and must wait for pings before we can peer)
 ///peerno is the number of peers to maintain at one time
-pub fn init(me: String, peer: Option<String>,peerno: usize) {
+///The peers subsystem can either be in client or server mode,
+///if the peers subsystem is in client mode, it will inform servers that we are a client, and will
+/// not enter a mutual relationship.
+///The way to specify client mode is by setting `me` to None, indicating we have no domain name.
+///Additionally, for client mode, `peer` must be set to a valid peer
+pub fn init(me: Option<String>, peer: Option<String>,peerno: usize) {
     {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut();
@@ -178,6 +204,7 @@ impl Peers {
         return ret;
     }
     pub fn update_chain(&mut self, hash: String, data_src: u64) -> Result<(),Box<dyn Error>> {
+        assert!(self.me != None);
         let upd = Update {src: db::get_addr(), dest: data_src,start_hash: hash};
         let msg = upd.to_capnp().unwrap();
         let dest = self.unicast(msg,data_src);
@@ -205,7 +232,7 @@ impl Peers {
         } 
         return Ok(());
     }
-    pub fn new(me: String, peer: Option<String>,peerno: usize) -> Self {
+    pub fn new(me: Option<String>, peer: Option<String>,peerno: usize) -> Self {
         let hs = {
             let mut hs = HashSet::new();
             if let Some(s) = peer {
@@ -213,21 +240,30 @@ impl Peers {
             }
             hs
         };
-        //we need to figure out our own ip address, that way we don't later attempt to peer with
-        //ourselves.
-        println!("[peers] resolving own hostname: {}",&me);
-        let mut addrs = me.to_socket_addrs().unwrap();
-        //this indicates to the user that they don't actually own the domain they are trying to
-        //start a server on
-        let socket = addrs.next().ok_or("resolution failed").unwrap();
-        let peers = Peers{
-            me: socket, 
-            peers:vec!(),
-            potential_peers:hs,
-            peerno:peerno
-        };
-
-        return peers;
+        if let Some(me) = me {
+            //we need to figure out our own ip address, that way we don't later attempt to peer with
+            //ourselves.
+            println!("[peers] resolving own hostname: {}",&me);
+            let mut addrs = me.to_socket_addrs().unwrap();
+            //this indicates to the user that they don't actually own the domain they are trying to
+            //start a server on
+            let socket = addrs.next().ok_or("resolution failed").unwrap();
+            let peers = Peers{
+                me: Some(socket), 
+                peers:vec!(),
+                potential_peers:hs,
+                peerno:peerno,
+            };
+            return peers;
+        } else {
+            let peers = Peers {
+                me: None, 
+                peers:vec!(),
+                potential_peers:hs,
+                peerno:peerno,
+            };
+            return peers;
+        }
     }
     ///This function attempts to enter a peer relation with another node in the potential_peers
     ///list
@@ -250,7 +286,7 @@ impl Peers {
 
 
         //check that we don't try to peer to ourselves
-        if socket == self.me {
+        if Some(socket) == self.me {
             return Err(Box::<dyn Error + Send + Sync>::from("Not peering to self"));
         }
 

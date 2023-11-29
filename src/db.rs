@@ -60,7 +60,7 @@ impl DB {
     ///  A->B->C->D->E->F
     pub fn merge_compatible(&mut self, chain: Vec<ChainEntry>) -> bool {
         assert!(self.chain.len() != 0);
-        let mut max = min(chain.len(),self.chain.len());
+        let max = min(chain.len(),self.chain.len());
         let them = &chain[0].hash;
         //iterate through to first shared entry
         let mut i = 0;
@@ -77,7 +77,7 @@ impl DB {
         if begindex == -1 {
             return false;
         }
-        let mut begindex = begindex as usize;
+        let begindex = begindex as usize;
         //skip common entries so we can fast-forward
         let mut usindex=begindex;
         let mut themindex=0;
@@ -296,7 +296,6 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
     assert!(db.chain.len() != 0);
 
 
-    let tiph = db.get_tip_hash().unwrap();
     let randint: u64 = db.get_elector_seed(cr);
     let n = db.chain.len();
 
