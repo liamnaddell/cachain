@@ -170,12 +170,6 @@ pub fn serialize_pubkey2(key: &Rsa<Public>) -> Vec<u8> {
     return v;
 }
 
-/*pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
-    let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
-    return to_encode;
-}*/
-
-//TODO: FIX
 pub fn deserialize_pubkey(keytext: &str) -> Rsa<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode.rsa().unwrap();

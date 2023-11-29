@@ -13,17 +13,21 @@ use std::net::SocketAddr;
 use std::thread;
 use std::time;
 
-pub fn start_update_thread(rootpeer:Option<String>) {
-    //TODO: Handle the case where we are the root peer
+pub fn start_update_thread() {
+    while peer_urls().len() == 0 {
+        println!("[peers] cannot start the update thread, no available peers, sleeping until some become available");
+        std::thread::sleep(time::Duration::from_secs(100));
+
+    }
+    println!("[peers] creating the update thread");
     thread::spawn(|| {
-        update_thread(rootpeer.unwrap());
+        update_thread();
     });
 }
 
 ///A thread that periodically attempts to get updates from peers
-fn update_thread(rootpeer: String) {
+fn update_thread() {
     //Ping+pong n=5 peers
-    peers::init(None,Some(rootpeer),5);
     loop {
         std::thread::sleep(time::Duration::from_secs(100));
         peers::update_chain("".to_string(),0xdeadbeef);
@@ -128,8 +132,7 @@ pub fn update_chain(hash: String, data_src: u64) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
-    //TODO: Address unwrap()
-    peers.update_chain(hash, data_src).unwrap();
+    let _ = peers.update_chain(hash, data_src);
 }
 
 /// Intial block download
@@ -141,8 +144,7 @@ pub fn initial_chain_download() {
     // For now, we will only retrieve the first peer's chain
     // Later implementation may retrieve from multiple peers
     let src_addr = peers.peers.first().unwrap().addr;
-    //TODO: Address unwrap()
-    peers.update_chain("".to_string(), src_addr).unwrap();
+    peers.update_chain("".to_string(), src_addr).expect("The initial chain download must succeed");
 }
 
 ///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging

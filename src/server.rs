@@ -316,7 +316,7 @@ fn main() -> Result<(),Box<dyn Error>> {
             }
         });
     }
-    peers::start_update_thread(peer);
+    peers::start_update_thread();
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;
