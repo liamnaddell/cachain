@@ -36,11 +36,11 @@ impl CertRequest {
   }
   
   ///Creates a new CertRequest for a URL (that we own)
-  pub fn new(url: String) -> CertRequest {
+  pub fn new(url: &str) -> CertRequest {
     let mut request = CertRequest {
       src: db::get_addr(),
       hash: "".to_string(),
-      url,
+      url:url.to_string(),
       requester_pubkey:String::from_utf8(serialize_pubkey(&db::get_key())).unwrap(),
       created_time:time_now(),
     };

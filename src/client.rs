@@ -14,8 +14,6 @@ struct Args {
     peer: String,
 }
 
-
-
 fn main() -> Result<(),Box<dyn Error>> {
     let args = Args::parse();
     let peer = args.peer;

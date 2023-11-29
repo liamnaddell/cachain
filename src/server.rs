@@ -8,7 +8,6 @@ use std::io;
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
-use std::env;
 use std::thread;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, Receiver};
@@ -19,6 +18,7 @@ use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
 use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::BigNum};
 use tokio::runtime::Runtime;
 use clap::Parser;
+use std::time;
 
 
 fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn Error>> {
@@ -164,19 +164,28 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
 
 }
 
+//this function is intended to be run in a thread, it tries to 🥺 it's
+// way into getting verified, exiting when verification was successful
 fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     let ces: Vec<ChainEntry> = db::find_by_domain(&domain);
     if ces.len() != 0 {
-        //we are already verified
+        //TODO: Test this
         println!("[verifier_thread] Our website is already verified");
         return Ok(());
     }
-    println!("[verifier_thread] Creating CertRequest to become verified");
-    let ce = CertRequest::new(domain);
-    //TODO: Fix the logic bugs with verifier_thread
-    let msg_builder = ce.to_advert_builder();
-    let msg = serialize::write_message_to_words(&msg_builder);
-    peers::broadcast(msg,0)?;
+    let mut exit = false;
+    while !exit {
+        println!("[verifier_thread] Creating CertRequest to attempt become verified");
+        let ce = CertRequest::new(&domain);
+        let msg_builder = ce.to_advert_builder();
+        let msg = serialize::write_message_to_words(&msg_builder);
+        peers::broadcast(msg,0)?;
+        println!("[verifier_thread] Waiting 100 seconds for the verification to complete");
+        std::thread::sleep(time::Duration::from_secs(100));
+        let ces: Vec<ChainEntry> = db::find_by_domain(&domain);
+        exit=ces.len() != 0;
+    }
+    println!("[verifier_thread] saw that the verification completed successfully");
     return Ok(());
 }
 
@@ -265,33 +274,29 @@ fn setup_https_server_thread(_domain: &str, rx: Receiver<String>) -> Result<(),B
 struct Args {
     #[arg(short,long,default_value_t = false)]
     in_memory: bool,
-    peer: String,
+    url: String,
+    #[arg(short,long)]
+    peer: Option<String>,
+    #[arg(long,default_value_t=5)]
+    peerno: usize,
 }
 
 
 fn main() -> Result<(),Box<dyn Error>> {
-    let _args = Args::parse();
-    //TODO: fix argparsing,add option for only in-memory database
-    let (domain,peer,peerno) = {
-        let args:Vec<String> = env::args().collect();
-        if args.len() < 2 {
-            println!("usage: <domain> <peer>");
-            std::process::exit(1);
-        }
-        let domain = &args[1];
-        if args.len() == 2 {
-            (domain.clone(),None,5)
-        } else {
-            let arg = args[2].to_string()+":8069";
-            println!("Initializing peer list with {}",arg);
-            (domain.clone(),Some(arg),5)
-        }
-    };
-    db::load_db("server_db.json");
+    let args = Args::parse();
+    let in_memory = args.in_memory;
+    let domain = args.url;
+    let peer = args.peer;
+    let peerno = args.peerno;
+
+    if in_memory {
+        db::in_memory();
+    } else {
+        db::load_db("server_db.json");
+    }
     peers::init(Some(domain.clone()+":8069"),peer.clone(),peerno);
     let (tx, rx) = channel::<String>();
     setup_https_server_thread(&domain, rx)?;
-    tx.send(String::from("testerov")).unwrap();
     
     if peer == None {
         println!("Creating new genesis from {domain}");
@@ -312,7 +317,6 @@ fn main() -> Result<(),Box<dyn Error>> {
         });
     }
     peers::start_update_thread(peer);
-        //TODO: Create update thread
     let listener = TcpListener::bind("0.0.0.0:8069".parse::<SocketAddr>().unwrap()).unwrap();
     for sstream in listener.incoming() {
         let stream = sstream?;

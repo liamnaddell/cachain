@@ -158,7 +158,7 @@ use std::path::Path;
 ///Loads database from file, otherwise creates a new database using DB::new()
 pub fn load_db(file: &str) {
     if !Path::new(&file).exists() {
-        println!("Creating new db");
+        println!("[db] creating a new db");
         let db = DB::new();
         let mut guard = DB_I.lock().unwrap();
         let option_db = guard.deref_mut();
@@ -167,11 +167,19 @@ pub fn load_db(file: &str) {
         let ddb = to_disk_db();
         fs::write(file,&serde_json::to_string(&ddb).unwrap()).unwrap();
     } else {
+        println!("[db] reading db from {}",file);
         let data = fs::read_to_string(file).unwrap();
         let ddb: DiskDB = serde_json::from_str(&data).unwrap();
         from_disk_db(ddb);
     }
     init_static_data();
+}
+pub fn in_memory() {
+    println!("[db] creating an in-memory database");
+    let db = DB::new();
+    let mut guard = DB_I.lock().unwrap();
+    let option_db = guard.deref_mut();
+    *option_db=Some(db);
 }
 
 //Initializes static data, called by load_db
@@ -377,7 +385,7 @@ pub fn generate_new_genesis(url: String) {
     let sigin = x509_sign(verifier_key,our_pubkey);
 
 
-    let cr = CertRequest::new(url);
+    let cr = CertRequest::new(&url);
     let ce = ChainEntry::new("".to_string(),0,time_now(),sigin.into(),db.pkey.clone(),cr);
     db.chain=vec!(ce);
     
