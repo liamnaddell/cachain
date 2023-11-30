@@ -74,6 +74,7 @@ impl Pong {
 pub enum AdvertKind {
     CR(chain::CertRequest),      // Cert Request data
     CE(String),                  // Chain Entry hash
+    CH(chain::Challenge),        // Challenge hash
 }
 
 #[derive(Debug)]
@@ -91,6 +92,8 @@ impl Advert {
                 => AdvertKind::CR(chain::CertRequest::from_reader(cr?)?),
             advert::kind::Ce(ce) 
                 => AdvertKind::CE(ce?.to_string()?),
+            advert::kind::Ch(ch)
+                => AdvertKind::CH(chain::Challenge::from_reader(ch?)?)
         };
         return Ok(Advert { src, dest, kind });
     }
@@ -115,6 +118,11 @@ impl Advert {
             }
             AdvertKind::CE(ce) => {
                 kind_builder.set_ce(text::Reader::from(ce.as_str()));
+            }
+            AdvertKind::CH(ch) => {
+                let mut chal_builder = ch.to_builder();
+                let ch_builder = chal_builder.get_root::<challenge::Builder>().unwrap();
+                kind_builder.set_ch(ch_builder.into_reader())?;
             }
         };
 

@@ -7,7 +7,6 @@ struct Msg {
         update @2;
         updateResponse @3;
         advert @4;
-        challenge @5;
     }
     contents :union {
         ping @0 :Ping;
@@ -15,7 +14,6 @@ struct Msg {
         update @2 :Update;
         updateResponse @3 :UpdateResponse;
         advert @4 :Advert;
-        challenge @5 :Challenge;
     }
 }
 
@@ -49,6 +47,7 @@ struct Advert {
     kind :union {
         cr @2 :CertRequest;
         ce @3 :Text;
+        ch @4 :Challenge;
     }
 }
 
