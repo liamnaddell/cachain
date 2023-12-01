@@ -287,7 +287,14 @@ fn main() -> Result<(),Box<dyn Error>> {
     let in_memory = args.in_memory;
     let domain = args.url;
     let peer = args.peer;
-    let peerno = args.peerno;
+    let peerno = {
+        if peer.is_none() {
+            0
+        } else {
+            args.peerno 
+        }
+    };
+
 
     if in_memory {
         db::in_memory();

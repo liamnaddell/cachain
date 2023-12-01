@@ -69,7 +69,10 @@ impl DB {
     ///Produce the following chain:
     ///  A->B->C->D->E->F
     pub fn merge_compatible(&mut self, chain: Vec<ChainEntry>) -> bool {
-        assert!(self.chain.len() != 0);
+        if self.chain.len() == 0 {
+            self.fast_forward(chain);
+            return true;
+        }
         let max = min(chain.len(),self.chain.len());
         let them = &chain[0].hash;
         //iterate through to first shared entry
@@ -196,6 +199,8 @@ pub fn in_memory() {
     let mut guard = DB_I.lock().unwrap();
     let option_db = guard.deref_mut();
     *option_db=Some(db);
+    drop(guard);
+    init_static_data();
 }
 
 //Initializes static data, called by load_db
@@ -345,24 +350,29 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
     let total_tickets = (1..n).map(f).sum::<f64>() as u64;
 
     //I'm aware this isn't an even distribution, this modulo biases towards senority
-    let winner_ticket = randint % total_tickets;
 
     //TODO: Find a better way if we have time, this algorithm should be O(1) instead its O(n),
     //where n is the length of the chain, which will only work for relatively short chains
     let winner_ce_number = {
-        let mut sum = 0.0;
-        let mut res = None;
-        for i in 1..n {
-            if (sum as u64) == winner_ticket {
-                res=Some(i);
-                break;
+        if total_tickets != 0 {
+            let winner_ticket = randint % total_tickets;
+            let mut sum = 0.0;
+            let mut res = None;
+            for i in 1..n {
+                if (sum as u64) == winner_ticket {
+                    res=Some(i);
+                    break;
+                }
+                sum+=f(i);
             }
-            sum+=f(i);
+            res
+        } else {
+            //there's only 1 entry in the chain
+            Some(0)
         }
-        res
     };
     //this computation should *literally* never fail
-    let winner_ce_number=winner_ce_number.unwrap();
+    let winner_ce_number = winner_ce_number.unwrap();
 
     //casting to a usize is safe here because the length of the chain will never be larger than a
     //32 bit integer, because there will never be 4 billion websites (i.e. more websites than ipv4 addresses)

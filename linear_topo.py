@@ -8,8 +8,8 @@ class MyTopo( Topo ):
 
         # Add hosts and switches
         leftHost = self.addHost( 'h1' )
-        rightHost = self.addHost( 'h2' )
-        cHost = self.addHost( 'h3' )
+        cHost = self.addHost( 'h2' )
+        rightHost = self.addHost( 'h3' )
         switch = self.addSwitch( 's1' )
         switch2 = self.addSwitch( 's2' )
 

@@ -14,13 +14,13 @@ use std::thread;
 use std::time;
 
 pub fn start_update_thread() {
-    while peer_urls().len() == 0 {
-        println!("[peers] cannot start the update thread, no available peers, sleeping until some become available");
-        std::thread::sleep(time::Duration::from_secs(100));
-
-    }
     println!("[peers] creating the update thread");
     thread::spawn(|| {
+        while peer_urls().len() == 0 {
+            println!("[peers] cannot start the update thread, no available peers, sleeping until some become available");
+            std::thread::sleep(time::Duration::from_secs(100));
+
+        }
         update_thread();
     });
 }
@@ -29,8 +29,9 @@ pub fn start_update_thread() {
 fn update_thread() {
     //Ping+pong n=5 peers
     loop {
-        std::thread::sleep(time::Duration::from_secs(100));
-        peers::update_chain("".to_string(),0xdeadbeef);
+        std::thread::sleep(time::Duration::from_secs(10));
+        //TODO: In the future, we should xref from mutliple peers
+        peers::update_chain("".to_string(),0);
     }
 }
 
@@ -205,8 +206,16 @@ impl Peers {
         }
         return ret;
     }
-    pub fn update_chain(&mut self, hash: String, data_src: u64) -> Result<(),Box<dyn Error>> {
+    pub fn update_chain(&mut self, hash: String, src_addr: u64) -> Result<(),Box<dyn Error>> {
         assert!(self.me != None);
+        let data_src = {
+            if src_addr == 0 {
+                self.peers.first().unwrap().addr
+            } else {
+                src_addr
+            }
+        };
+
         let upd = Update {src: db::get_addr(), dest: data_src,start_hash: hash};
         let msg = upd.to_capnp().unwrap();
         let dest = self.unicast(msg,data_src);
@@ -277,9 +286,10 @@ impl Peers {
             } else {
                 let peer = self.potential_peers.iter().next().expect("there's at least 1 peer, but no next element").clone();
                 self.potential_peers.remove(&peer);
-                peer
+                peer+":8069"
             }
         };
+        println!("[peers] resolving {}",url);
         //perform dns resolution to get the IP address
         let addrs = url.to_socket_addrs();
         let mut socket = addrs?.next().ok_or("resolution failed")?;
@@ -334,9 +344,11 @@ impl Peers {
         let mut count = 0;
         for _ in 0..self.peerno {
             let result = self.generate_peer();
-            if result.is_ok() {
+            if let Err(e) = result { 
+                println!("[peers] Generation failed: {}", e)
+            } else {
                 count+=1;
-            }
+            } 
         }
         return count;
     }
