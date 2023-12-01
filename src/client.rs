@@ -48,5 +48,10 @@ fn main() -> Result<(),Box<dyn Error>> {
     //TODO: Add option for maintaining list of currently valid ca certificates
     peers::init(None,Some(peer),args.peerno);
     peers::start_update_thread();
+    let rx = db::update_channel();
+    loop {
+        let ce = rx.recv()?;
+        println!("New update: {}",ce);
+    }
     return Ok(());
 }

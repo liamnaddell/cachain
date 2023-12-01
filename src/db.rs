@@ -6,6 +6,7 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::ops::{Deref,DerefMut};
 use std::cmp::min;
+use std::sync::mpsc::{Sender,Receiver,channel};
 
 
 
@@ -17,6 +18,9 @@ pub struct DB {
     pub chain: Vec<ChainEntry>,
     pub pkey: Rsa<Private>,
     pub addr: u64,
+    //transmitter for updates to the blockchain
+    tx: Option<Sender<ChainEntry>>,
+
 }
 
 use rand::random;
@@ -25,7 +29,13 @@ impl DB {
     pub fn new() -> DB {
         let v = vec!();
         let pkey = generate();
-        return DB { chain: v, pkey: pkey, addr:random()};
+        return DB { chain: v, pkey: pkey, addr:random(), tx: None};
+    }
+    fn add_block(&mut self, ce: ChainEntry) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(ce.clone());
+        }
+        self.chain.push(ce);
     }
     ///Appends chain to our chain, returning false if the chains are incompatible
     ///Chains are incompatable when the prev_hash and previous node's hash do not match. 
@@ -39,7 +49,7 @@ impl DB {
         for new_head in chain.iter() {
             let head = &self.chain[self.chain.len()-1];
             if head.hash == new_head.prev_hash {
-                self.chain.push(new_head.clone());
+                self.add_block(new_head.clone());
             } else {
                 return false;
             }
@@ -115,6 +125,12 @@ impl DB {
         let head = &self.chain[self.chain.len()-1];
         return Some(head.hash.clone());
     }
+    //returns a channel that updates to the chain are sent on
+    pub fn update_channel(&mut self) -> Receiver<ChainEntry> {
+        let (tx,rx) = channel();
+        self.tx=Some(tx);
+        return rx;
+    }
 }
 
 fn to_disk_db() -> DiskDB {
@@ -130,7 +146,7 @@ fn from_disk_db(ddb: DiskDB) {
     let rsa = pkey.rsa().unwrap();
     let mut guard = DB_I.lock().unwrap();
     let option_db = guard.deref_mut();
-    let db = DB { chain: ddb.chain, pkey: rsa,addr:ddb.addr};
+    let db = DB { chain: ddb.chain, pkey: rsa,addr:ddb.addr, tx: None};
     *option_db=Some(db);
 }
 
@@ -369,6 +385,12 @@ pub fn merge_compatible(chain: Vec<ChainEntry>) -> bool {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
     return db.merge_compatible(chain);
+}
+
+pub fn update_channel() -> Receiver<ChainEntry> {
+    let mut guard = DB_I.lock().unwrap();
+    let db = guard.deref_mut().as_mut().expect("should be initialized");
+    return db.update_channel();
 }
 
 ///Generates a new genesis block with our info and url as the root of the blockchain.
