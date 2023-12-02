@@ -94,12 +94,10 @@ impl DB {
         //skip common entries so we can fast-forward
         let mut usindex=begindex;
         let mut themindex=0;
-        while self.chain[usindex].hash == chain[themindex].hash {
+        while (usindex < self.chain.len()) && (themindex < chain.len()) && 
+            (self.chain[usindex].hash == chain[themindex].hash) {
             usindex+=1;
             themindex+=1;
-            if themindex == max {
-                break;
-            }
         }
         self.fast_forward(chain[themindex..].to_vec())
     }
@@ -339,14 +337,15 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
             if x != n {
                 n/n-x
             } else {
-                0.0
+                //this case shouldn't happen
+                1.0
             }
         };
         first_guy_tickets/factor
     };
 
     //there's obviously a better way of doing this, I can't figure it out at the moment
-    let total_tickets = (1..n).map(f).sum::<f64>() as u64;
+    let total_tickets = ((1..(n-1)).map(f).sum::<f64>()).floor() as u64;
 
     //I'm aware this isn't an even distribution, this modulo biases towards senority
 
