@@ -335,7 +335,7 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
         let n = n as f64;
         let factor = {
             if x != n {
-                n/n-x
+                n/(n-x)
             } else {
                 //this case shouldn't happen
                 1.0
@@ -346,6 +346,8 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
 
     //there's obviously a better way of doing this, I can't figure it out at the moment
     let total_tickets = ((1..(n-1)).map(f).sum::<f64>()).floor() as u64;
+    //a reasonable upper bound...
+    assert!(total_tickets < (5*n) as u64);
 
     //I'm aware this isn't an even distribution, this modulo biases towards senority
 
