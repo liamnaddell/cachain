@@ -131,19 +131,50 @@ impl Challenge {
             time:time_now(),
         };
     }
-    ///Convert challenge string to capnp message
-    pub fn to_msg(&self) -> Vec<u8> {
-        let mut message = Builder::new_default();
-        let msg_builder = message.init_root::<msg_capnp::msg::Builder>();
-        let c_b = msg_builder.init_contents();
-        let mut b = c_b.init_challenge();
+    ///Convert challenge string to capnp advert message 
+    pub fn to_advert_msg(&self) -> Vec<u8> {
+        let mut mb = Builder::new_default();
+        let msg = mb.init_root::<msg::Builder>();
+        let cts = msg.init_contents();
+        let mut adv = cts.init_advert();
+        adv.set_src(db::get_addr());
+        adv.set_dest(self.dest);
+
+        let adv_kind = adv.reborrow().init_kind();
+        let mut b = adv_kind.init_ch();
         b.set_src(self.src);
         b.set_dest(self.dest);
         b.set_challenge_string(text::Reader::from(self.chal_str.as_str()));
 
-        let v = serialize::write_message_to_words(&message);
+        let v = serialize::write_message_to_words(&mb);
 
         return v;
+    }
+    /// Convert to a capnp builder
+    pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
+        let mut mb = Builder::new_default();
+        let msg = mb.init_root::<msg::Builder>();
+        let cts = msg.init_contents();
+        let mut adv = cts.init_advert();
+        adv.set_src(db::get_addr());
+        let adv_kind = adv.reborrow().init_kind();
+        let mut ch = adv_kind.init_ch();
+        ch.set_src(self.src);
+        ch.set_dest(self.dest);
+        ch.set_challenge_string(TextReader::from(self.chal_str.as_str()));
+
+        return mb;
+    }
+    /// Return a hash of the challenge
+    pub fn get_hash(&self) -> String {
+        let mut concat = self.chal_str.clone();
+        concat.push('|');
+        concat.push_str(&self.src.to_string());
+        concat.push('|');
+        concat.push_str(&self.dest.to_string());
+        concat.push('|');
+        concat.push_str(&self.time.to_string());
+        return calculate_data_hash(&Vec::from(concat.as_bytes()));
     }
     pub fn from_reader(r: challenge::Reader) -> Result<Self,Box<dyn Error>>  {
         let src = r.get_src();

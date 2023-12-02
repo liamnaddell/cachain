@@ -79,18 +79,6 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                     panic!("Cannot add new entries :sadge:2");
                 }
             }
-            //If we receive a challenge, do nothing until george fixes
-            contents::Challenge(ce_reader) => {
-                let cer = Challenge::from_reader(ce_reader?)?;
-                println!("Received challenge: {:?}",cer);
-                //TODO: George fix
-                tx.send(cer.chal_str.clone());
-
-                // forward challenge
-                let blacklist = cer.src;
-                let forwarding_msg = cer.to_msg();
-                peers::broadcast(forwarding_msg, blacklist)?;
-            }
             //If we receive an advert, send a request on a new channel (Adverts are broadcasted on
             //write-only lines)
             contents::Advert(adv_reader) => {
@@ -98,6 +86,14 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                 println!("Received advert: {:#?}",adv);
                 match &adv.kind {
                     AdvertKind::CE(hash) => {
+                        // Check if we already have this hash
+                        if peers::check_seen_hashes(hash) {
+                            println!("Reject already seen CE with has {}",hash);
+                            continue;
+                        } else {
+                            peers::add_seen_hash(hash.clone());
+                        }
+                        
                         let maybe_hash = db::find_hash(hash);
                         if maybe_hash.is_none() {
                             // May store this has for cross checking?
@@ -115,22 +111,30 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
 
                             // forward the advert to other peers
                             let blacklist = adv.src;
-                            // Special case: update src to self, so peers can send update request to us
                             adv.src = db::get_addr();     
                             let forwarding_msg = adv.to_msg()?;
                             peers::broadcast(forwarding_msg, blacklist)?;
                         }
                     }
-                    //If we received a cert reqeust, check if we are the elector, or just broadcast
+                    //If we received a cert reqeust, check if we are the elector, then broadcast
                     //the message
                     AdvertKind::CR(cr)  => {
+                        // Check if we already have this hash
+                        if peers::check_seen_hashes(&cr.hash) {
+                            println!("Reject already seen CR with has {}",cr.hash);
+                            continue;
+                        } else {
+                            peers::add_seen_hash(cr.hash.clone());
+                        }
+
                         println!("Received cert request: {:#?}",cr);
                         let ni = db::current_elector();
                         if ni.addr == db::get_addr() {
                             let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
                             println!("Created challenge: {:?}",chal);
                             //TODO: Fix this api w/ real values + better func
-                            peers::broadcast(chal.to_msg(),0)?;
+                            peers::add_seen_hash(chal.get_hash());
+                            peers::broadcast(chal.to_advert_msg(),0)?;
                         }
 
                         //TODO: need to store this cert request in memory... somewhere
@@ -138,8 +142,35 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         
                         // forward cert request to other peers
                         let blacklist = adv.src;
+                        adv.src = db::get_addr();
                         let forwarding_msg = adv.to_msg()?;
                         peers::broadcast(forwarding_msg, blacklist)?;
+                    }
+                    //If we received a challenge, check if we are the intendent recipient, or just
+                    //broadcast the message
+                    AdvertKind::CH(ch) => {
+                        // Check if we already have seen the challenge
+                        let ch_hash = ch.get_hash();
+                        if peers::check_seen_hashes(&ch_hash) {
+                            println!("Reject already seen CH with has {}",ch_hash);
+                            continue;
+                        } else {
+                            peers::add_seen_hash(ch_hash.clone());
+                        }
+
+                        // Check to see if the challenge is to us
+                        let our_dest = db::get_addr();
+                        if ch.dest == our_dest || adv.dest == our_dest {
+                            // handle challenge
+                            println!("Received challenge response: {:#?}", ch);
+                            tx.send(ch.chal_str.clone())?;
+                        } else {
+                            // forward challenge response to other peers
+                            let blacklist = adv.src;
+                            adv.src = our_dest;
+                            let forwarding_msg = adv.to_msg()?;
+                            peers::broadcast(forwarding_msg, blacklist)?;
+                        }
                     }
                 }
             }
@@ -164,6 +195,8 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     //
     let msg_builder = ce.to_advert_builder();
     let msg = serialize::write_message_to_words(&msg_builder);
+    // Add the hash to the seen list and send it out
+    peers::add_seen_hash(ce.hash.clone());
     peers::broadcast(msg,0)?;
     return Ok(());
 }
