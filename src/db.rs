@@ -98,8 +98,7 @@ impl DB {
             usindex+=1;
             themindex+=1;
             if themindex == max {
-                //the incoming chain is a subset of our current chain, no FF required
-                return true;
+                break;
             }
         }
         self.fast_forward(chain[themindex..].to_vec())

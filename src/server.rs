@@ -58,7 +58,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                     chain:db::get_tail(&update.start_hash),
                 };
                 let update_r = update.to_capnp();
-                println!("Sending response: {}",update);
+                //println!("Sending response: {}",update);
                 stream.write(&update_r)?;
             }
             // 
@@ -167,6 +167,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
 //this function is intended to be run in a thread, it tries to 🥺 it's
 // way into getting verified, exiting when verification was successful
 fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
+    //TODO: THIS DOESN'T WORK!!!
     let ces: Vec<ChainEntry> = db::find_by_domain(&domain);
     if ces.len() != 0 {
         //TODO: Test this
