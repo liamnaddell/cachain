@@ -1,1 +1,25 @@
-./target/debug/client $@
+#!/bin/sh
+
+#This dark magic does the following:
+# 1: Searches all directories above the current for a Cargo.toml
+# 2: Appends target/debug/client or target/debug/server depending on this files name
+# 3: runs the binary with arguments supplied to this script
+#
+pwd=$(pwd)
+bin=
+exe=$(basename $0)
+#searches for Cargo.toml to know where the top-level dir is
+while true; do
+    if [ -e $pwd/Cargo.toml ]; then
+        bin=${pwd}/target/debug/${exe}
+        break;
+    fi 
+    pwd=$(dirname $pwd)
+done
+
+if [ -z "$bin" ]; then
+    echo "🥴 I can't find $0 lol rawr OwO"
+    exit 1
+fi
+
+$bin $@
