@@ -226,7 +226,7 @@ impl Peers {
         return ret;
     }
     pub fn update_chain(&mut self, hash: String, src_addr: u64) -> Result<(),Box<dyn Error>> {
-        assert!(self.me != None);
+        //assert!(self.me != None);
         let data_src = {
             if src_addr == 0 {
                 self.peers.first().unwrap().addr
@@ -280,7 +280,7 @@ impl Peers {
             let socket = addrs.next().ok_or("resolution failed").unwrap();
             let seen_hashes: VecDeque<String> = VecDeque::new();
             let peers = Peers {
-                me: socket,
+                me: Some(socket),
                 peers:vec!(),
                 potential_peers:hs,
                 peerno:peerno,

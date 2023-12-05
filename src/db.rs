@@ -5,7 +5,6 @@ use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::ops::{Deref,DerefMut};
-use std::cmp::min;
 use std::sync::mpsc::{Sender,Receiver,channel};
 
 
@@ -43,7 +42,9 @@ impl DB {
     ///See functional requirements for more info.
     pub fn fast_forward(&mut self, chain: Vec<ChainEntry>) -> bool {
         if self.chain.len() == 0 {
-            self.chain=chain;
+            for b in chain.iter() {
+                self.add_block(b.clone());
+            }
             return true;
         }
         for new_head in chain.iter() {
@@ -73,7 +74,6 @@ impl DB {
             self.fast_forward(chain);
             return true;
         }
-        let max = min(chain.len(),self.chain.len());
         let them = &chain[0].hash;
         //iterate through to first shared entry
         let mut i = 0;
