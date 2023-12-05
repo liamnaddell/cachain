@@ -4,7 +4,7 @@ use std::error::Error;
 use core::result::Result;
 use std::net::TcpStream;
 use std::io::Write;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::net::ToSocketAddrs;
 use crate::*;
 use lazy_static::lazy_static;
@@ -34,6 +34,8 @@ fn update_thread() {
         peers::update_chain("".to_string(),0);
     }
 }
+
+const SEEN_QUEUE_SIZE: usize = 420;
 
 ///A peer with an optional open TcpStream to the peer used for broadcasting
 pub struct Peer {
@@ -79,7 +81,8 @@ pub struct Peers {
     me: Option<SocketAddr>,
     peers: Vec<Peer>,
     potential_peers: HashSet<String>,
-    peerno: usize,         // desired original number of peers
+    peerno: usize,
+    seen_hashes: VecDeque<String>,
 }
 //the singleton instance of the Peers struct. Must be intialized using peers::init()
 lazy_static! {
@@ -146,6 +149,22 @@ pub fn initial_chain_download() {
     // Later implementation may retrieve from multiple peers
     let src_addr = peers.peers.first().unwrap().addr;
     peers.update_chain("".to_string(), src_addr).expect("The initial chain download must succeed");
+}
+
+/// Check if a message hash is already been seen
+pub fn check_seen_hashes(hash: &String) -> bool {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    return peers.check_seen_hash(&hash);
+}
+
+/// Add a new message hash to the seen hashes
+pub fn add_seen_hash(hash: String) {
+    let mut guard = PEER_INS.lock().unwrap();
+    let option_peer = guard.deref_mut().as_mut();
+    let peers: &mut Peers = option_peer.expect("shouldn't be none");
+    peers.add_seen_hash(hash);
 }
 
 ///me is our url, this is used to prevent us from attempting to peer with ourselves (and hanging
@@ -259,22 +278,42 @@ impl Peers {
             //this indicates to the user that they don't actually own the domain they are trying to
             //start a server on
             let socket = addrs.next().ok_or("resolution failed").unwrap();
-            let peers = Peers{
-                me: Some(socket), 
+            let seen_hashes: VecDeque<String> = VecDeque::new();
+            let peers = Peers {
+                me: socket,
                 peers:vec!(),
                 potential_peers:hs,
                 peerno:peerno,
+                seen_hashes
             };
             return peers;
         } else {
+            //TODO: Not actually used in client mode, fix
+            let seen_hashes: VecDeque<String> = VecDeque::new();
             let peers = Peers {
                 me: None, 
                 peers:vec!(),
                 potential_peers:hs,
                 peerno:peerno,
+                seen_hashes
             };
             return peers;
         }
+    }
+    pub fn check_seen_hash(&self, hash: &String) -> bool {
+        for h in self.seen_hashes.iter() {
+            if hash == h {
+                return true;
+            }
+        }
+    return false;
+    }
+    pub fn add_seen_hash(&mut self, hash: String) {
+        let length = self.seen_hashes.len();
+        if length > SEEN_QUEUE_SIZE {
+            self.seen_hashes.pop_front();
+        }
+        self.seen_hashes.push_back(hash);
     }
     ///This function attempts to enter a peer relation with another node in the potential_peers
     ///list
