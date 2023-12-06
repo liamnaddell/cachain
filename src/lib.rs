@@ -7,6 +7,8 @@ use serde::{Deserialize,Serialize};
 use std::error::Error;
 use core::result::Result;
 use crate::chain::*;
+use openssl::asn1::Asn1Time;
+use openssl::bn::BigNum;
 
 pub mod peers;
 pub mod db;
@@ -23,9 +25,8 @@ impl Ping {
         let src = p.get_src();
         let dest = p.get_dest();
         let keytext = p.get_key()?.to_string()?;
-        let key = deserialize_pubkey(keytext);
-        let rsa_key = key.rsa()?;
-        return Ok(Ping {src:src,dest:dest,key:rsa_key,});
+        let key = deserialize_pubkey(&keytext);
+        return Ok(Ping {src:src,dest:dest,key:key,});
     }
     pub fn to_msg(&self) -> Result<Vec<u8>,Box<dyn Error>> {
         let mut md = Builder::new_default();
@@ -59,8 +60,7 @@ impl Pong {
         let src = p.get_src();
         let dest = p.get_dest();
         let keytext = p.get_key()?.to_string()?;
-        let key = deserialize_pubkey(keytext);
-        let rsa_key = key.rsa()?;
+        let rsa_key = deserialize_pubkey(&keytext);
         let mut peers = vec!();
         for peer in p.get_peers()?.iter() {
             peers.push(peer?.to_string()?);
@@ -174,20 +174,13 @@ pub fn serialize_pubkey(key: &Rsa<Private>) -> Vec<u8> {
     return v;
 }
 
-//TODO: fix this stupid
 pub fn serialize_pubkey2(key: &Rsa<Public>) -> Vec<u8> {
     let to_encode = PKey::from_rsa(key.clone()).unwrap();
     let v = to_encode.public_key_to_pem().unwrap();
     return v;
 }
 
-pub fn deserialize_pubkey(keytext: String) -> PKey<Public> {
-    let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
-    return to_encode;
-}
-
-//TODO: FIX
-pub fn deserialize_pubkey2(keytext: &str) -> Rsa<Public> {
+pub fn deserialize_pubkey(keytext: &str) -> Rsa<Public> {
     let to_encode = PKey::public_key_from_pem(keytext.as_bytes()).unwrap();
     return to_encode.rsa().unwrap();
 }
@@ -227,12 +220,21 @@ pub fn encrypt(rsa: Rsa<Private>) -> Vec<u8> {
     return v;
 }*/
 
-#[derive(Debug)]
 pub struct UpdateResponse {
     pub src:u64,
     pub dest:u64,
     pub start_hash: String,             // requested start hash
     pub chain: Vec<chain::ChainEntry>,  // chain entries (maybe the whole chain)
+}
+use std::fmt;
+impl fmt::Display for UpdateResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "UpdateResponse {{ src: {}, dest: {}, start_hash: {}, chain: {{" , self.src,self.dest,self.start_hash)?;
+        for ce in self.chain.iter() {
+            write!(f,"{}, ",ce)?;
+        }
+        write!(f,"}} }}")
+    }
 }
 impl UpdateResponse {
     pub fn to_capnp(&self) -> Vec<u8> {
@@ -260,7 +262,7 @@ impl UpdateResponse {
         let bchain = r.get_bchain()?;
         for i in 0..bchain.len() {
             let ce_reader = bchain.get(i);
-            let ce = ChainEntry::from_reader(ce_reader)?;
+            let ce = chain::ChainEntry::from_reader(ce_reader)?;
             v.push(ce);
         }
         return Ok(UpdateResponse {src,dest,start_hash,chain:v});
@@ -290,20 +292,29 @@ pub mod msg_capnp {
 
 
 pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>) -> String {
-        let verifier_pkey = PKey::from_rsa(private).unwrap();
-        //an x509 request is the certificate of the CA
-        let mut req_builder: X509ReqBuilder = X509ReqBuilder::new().unwrap();
-        req_builder.set_pubkey(&verifier_pkey).unwrap();
-        //let verifier_req: X509Req = req_builder.build();
-        //use to_pem to serialize
+    //let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
+    let now = Asn1Time::from_unix(time_now() as i64).unwrap();
+    let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
+    let mut x509 = X509::builder().unwrap();
+    x509.set_not_before(&now).unwrap();
+    x509.set_not_after(&year_from_now).unwrap();
+    x509.set_serial_number(&(BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap())).unwrap();
+    let mut x509_name = X509NameBuilder::new().unwrap();
+    x509_name.append_entry_by_text("C", "CA").unwrap();
+    x509_name.append_entry_by_text("O", "cachain").unwrap();
+    x509_name.append_entry_by_text("CN", "domain").unwrap();
+    let x509_name = x509_name.build();
+    x509.set_issuer_name(&x509_name).unwrap();
+    x509.set_subject_name(&x509_name).unwrap();
 
-        //Now we are going to use verifier_req to sign a certificate
-        let verified_pkey = PKey::from_rsa(public).unwrap();
-        let mut other_builder = X509ReqBuilder::new().unwrap();
-        other_builder.set_pubkey(&verified_pkey).unwrap();
-        other_builder.sign(&verifier_pkey,MessageDigest::sha384()).unwrap();
-        let verified_req: X509Req = other_builder.build();
-        return String::from_utf8(verified_req.to_pem().unwrap()).unwrap();
+    // x509.set_issuer_name("cachain");
+    let pubkey_to_sign = PKey::from_rsa(public).unwrap();
+    x509.set_pubkey(&pubkey_to_sign).unwrap();
+    let privkey_signer = PKey::from_rsa(private).unwrap();
+    x509.sign(&privkey_signer, openssl::hash::MessageDigest::md5()).unwrap();
+    let x509 = x509.build();
+
+    return String::from_utf8(x509.to_pem().unwrap()).unwrap();
 
 }
 

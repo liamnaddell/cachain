@@ -7,15 +7,15 @@ class MyTopo( Topo ):
         "Create custom topo."
 
         # Add hosts and switches
-        leftHost = self.addHost( 'h1' )
-        rightHost = self.addHost( 'h2' )
-        liamHost = self.addHost( 'h3' )
+        h1 = self.addHost( 'h1' )
+        h2 = self.addHost( 'h2' )
+        h3 = self.addHost( 'h3' )
         switch = self.addSwitch( 's1' )
 
         # Add links
-        self.addLink( leftHost, switch )
-        self.addLink( rightHost, switch )
-        self.addLink( liamHost, switch )
+        self.addLink( h1, switch )
+        self.addLink( h2, switch )
+        self.addLink( h3, switch )
 
 
 topos = { 'mytopo': ( lambda: MyTopo() ) }

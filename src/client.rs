@@ -1,48 +1,66 @@
 use cachain::*;
-use std::net::{ToSocketAddrs,TcpStream};
-use capnp::serialize;
-use std::io::Write;
 use std::error::Error;
-use std::env;
+use std::io::Write;
+use std::fs::File;
+use std::fs;
+use clap::Parser;
+use cachain::chain::ChainEntry;
 
-const MY_ADDR: u64 = 10203;
+#[derive(Parser)]
+struct Args {
+    #[arg(short,long,default_value_t = false)]
+    in_memory: bool,
+    peer: String,
+    #[arg(long,default_value_t = 5)]
+    peerno: usize,
+    #[arg(short,long)]
+    loc: Option<String>,
+}
+
+fn dump_ce(path: &str, ce: &ChainEntry) -> Result<(), Box<dyn Error>> {
+    let text = &ce.verifier_signature;
+    let filename = &ce.hash;
+    //XXX: Not cross-compatible, but tbh, windows users r not allowed
+    let pp = path.to_string()+"/"+&filename;
+    let mut file = File::create(&pp)?;
+    file.write_all(text.as_slice())?;
+
+    Ok(())
+}
 
 fn main() -> Result<(),Box<dyn Error>> {
-    let args: Vec<String> = env::args().collect();
-    let peer = {
-        if args.len() == 1 {
-            "127.0.0.1:8069".to_string()
-        } else {
-            let stri = args[1].clone()+":8069";
-            stri
-        }
-    };
+    let args = Args::parse();
+    let peer = args.peer;
+
+    //a monad is a monoid in the category of endofunctors
+    let path = args.loc;
+
+
     db::load_db("client_db.json");
-    println!("{}",peer);
-    let mut addrs = peer.to_socket_addrs().unwrap();
-    let mut socket = addrs.next().unwrap();
-    socket.set_port(8069);
-    println!("Connecting to peer {} with ip {:?}",peer,socket);
-    let mut stream = TcpStream::connect(socket).unwrap();
-    //send ping
-    let ping = Ping {src:MY_ADDR,dest:0,key:private_to_public(&db::get_key())};
-    let msg_ping = ping.to_msg()?;
+    peers::init(None,Some(peer),args.peerno);
+    peers::start_update_thread();
+    let rx = db::update_channel();
+    let chain = db::get_chain();
 
-    stream.write(&msg_ping)?;
-
-    let reader = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
-
-    //TODO: add pong info to running list of peers
-    let pong = reader.get_root::<msg_capnp::pong::Reader>().unwrap();
-    println!("{:?}",pong);
-    deserialize_pubkey(pong.get_key()?.to_string()?);
-
-    let update = Update {src:MY_ADDR,dest:pong.get_src(),start_hash:"".to_string()};
-    let msg_update = update.to_capnp()?;
-
-    stream.write(&msg_update)?;
-    let reader2 = serialize::read_message(&stream,capnp::message::ReaderOptions::new()).unwrap();
-    let update_response = reader2.get_root::<msg_capnp::update_response::Reader>()?;
-    println!("{:?}", update_response);
-    return Ok(());
+    if let Some(ref p) = path {
+        println!("Dumping certs in database");
+        //ignore errors like "the directory already exists"
+        let _ = fs::create_dir(p);
+        for ce in chain.iter() {
+            if let Err(e) = dump_ce(p,ce) {
+                println!("Error dumping certs: {}",e);
+            }
+        }
+    }
+    println!("Entering main loop");
+    loop {
+        let ce = rx.recv()?;
+        println!("New update: {}",ce);
+        if let Some(ref p) = path {
+            println!("Dumping new cert");
+            if let Err(e) = dump_ce(p,&ce) {
+                println!("Error dumping certs: {}",e);
+            }
+        }
+    }
 }

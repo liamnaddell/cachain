@@ -10,6 +10,30 @@ use crate::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::net::SocketAddr;
+use std::thread;
+use std::time;
+
+pub fn start_update_thread() {
+    println!("[peers] creating the update thread");
+    thread::spawn(|| {
+        while peer_urls().len() == 0 {
+            println!("[peers] cannot start the update thread, no available peers, sleeping until some become available");
+            std::thread::sleep(time::Duration::from_secs(100));
+
+        }
+        update_thread();
+    });
+}
+
+///A thread that periodically attempts to get updates from peers
+fn update_thread() {
+    //Ping+pong n=5 peers
+    loop {
+        std::thread::sleep(time::Duration::from_secs(10));
+        //TODO: In the future, we should xref from mutliple peers
+        peers::update_chain("".to_string(),0);
+    }
+}
 
 const SEEN_QUEUE_SIZE: usize = 420;
 
@@ -54,7 +78,7 @@ impl Peer {
 }
 
 pub struct Peers {
-    me: SocketAddr,
+    me: Option<SocketAddr>,
     peers: Vec<Peer>,
     potential_peers: HashSet<String>,
     peerno: usize,
@@ -112,7 +136,7 @@ pub fn update_chain(hash: String, data_src: u64) {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut().as_mut();
     let peers: &mut Peers = option_peer.expect("shouldn't be none");
-    peers.update_chain(hash, data_src);
+    let _ = peers.update_chain(hash, data_src);
 }
 
 /// Intial block download
@@ -124,7 +148,7 @@ pub fn initial_chain_download() {
     // For now, we will only retrieve the first peer's chain
     // Later implementation may retrieve from multiple peers
     let src_addr = peers.peers.first().unwrap().addr;
-    peers.update_chain("".to_string(), src_addr);
+    peers.update_chain("".to_string(), src_addr).expect("The initial chain download must succeed");
 }
 
 /// Check if a message hash is already been seen
@@ -148,7 +172,12 @@ pub fn add_seen_hash(hash: String) {
 ///peer is an optional peer to attempt to reach out to upon initialization (otherwise we fail to
 ///peer with anyone, and must wait for pings before we can peer)
 ///peerno is the number of peers to maintain at one time
-pub fn init(me: String, peer: Option<String>,peerno: usize) {
+///The peers subsystem can either be in client or server mode,
+///if the peers subsystem is in client mode, it will inform servers that we are a client, and will
+/// not enter a mutual relationship.
+///The way to specify client mode is by setting `me` to None, indicating we have no domain name.
+///Additionally, for client mode, `peer` must be set to a valid peer
+pub fn init(me: Option<String>, peer: Option<String>,peerno: usize) {
     {
     let mut guard = PEER_INS.lock().unwrap();
     let option_peer = guard.deref_mut();
@@ -165,8 +194,7 @@ pub fn init(me: String, peer: Option<String>,peerno: usize) {
 }
 
 impl Peers {
-    //TODO: Guarantee messages are sent to at least one peer and generate peers if there are none
-    //returns the number of peers the message was broadcasted to
+    ///returns the number of peers the message was broadcasted to
     pub fn broadcast(&mut self, msg: Vec<u8>, blacklist: u64) -> Result<usize,Box<dyn Error>> {
         let mut i = 0;
         if self.peers.len() == 0 {
@@ -197,26 +225,26 @@ impl Peers {
         }
         return ret;
     }
-    pub fn update_chain(&mut self, hash: String, data_src: u64) {
-        //TODO: fix this deadbeef. This can be done by crafting a unique update message to each
-        //peer, then using peer.addr inside the Peers struct.
-        let upd = Update {src: db::get_addr(), dest: 0xdeadbeef,start_hash: hash};
+    pub fn update_chain(&mut self, hash: String, src_addr: u64) -> Result<(),Box<dyn Error>> {
+        //assert!(self.me != None);
+        let data_src = {
+            if src_addr == 0 {
+                self.peers.first().unwrap().addr
+            } else {
+                src_addr
+            }
+        };
+
+        let upd = Update {src: db::get_addr(), dest: data_src,start_hash: hash};
         let msg = upd.to_capnp().unwrap();
-        //TODO: DELETE UNWRAPS, MUST BE DONE BEFORE SUBMISSION
-        //TODO: REFACTOR broadcast API to NOT RETURN RESULTS!!!
-        //TODO: REFACTOR capnp serialization API to NOT RETURN RESULTS!!!
-        
         let dest = self.unicast(msg,data_src);
-        if dest.is_none() {
-            println!("[peers] update_chain: no peer found for data_src {}",data_src);
-            return;
-        } else {
+        if let Some(peer) = dest {
             // Read update response from data source
-            let peer = dest.unwrap();
-            let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new()).unwrap();
-            let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>().unwrap();
-            let upd = UpdateResponse::from_reader(msg_reader).unwrap();
-            println!("Received update_response from inside peers: {:?}",upd);
+            // can unwrap() here because unicast called send_msg() which opens a connection
+            let reader = serialize::read_message(peer.conn.as_ref().unwrap(),capnp::message::ReaderOptions::new())?;
+            let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>()?;
+            let upd = UpdateResponse::from_reader(msg_reader)?;
+            println!("Received update_response from inside peers: {}",upd);
             
             // TODO: need more validation / verification
             if !chain::is_valid_chain(
@@ -225,13 +253,16 @@ impl Peers {
             ) { 
                 panic!("Received invalid update :sadge:1");
             }
-            let succ = db::fast_forward(upd.chain);
+            let succ = db::merge_compatible(upd.chain);
             if !succ {
                 panic!("Cannot add new entries :sadge:2");
             }
-        }
+        } else {
+            panic!("[peers] update_chain: no peer found for data_src {}",data_src);
+        } 
+        return Ok(());
     }
-    pub fn new(me: String, peer: Option<String>,peerno: usize) -> Self {
+    pub fn new(me: Option<String>, peer: Option<String>,peerno: usize) -> Self {
         let hs = {
             let mut hs = HashSet::new();
             if let Some(s) = peer {
@@ -239,23 +270,35 @@ impl Peers {
             }
             hs
         };
-        //we need to figure out our own ip address, that way we don't later attempt to peer with
-        //ourselves.
-        println!("[peers] resolving own hostname: {}",&me);
-        let mut addrs = me.to_socket_addrs().unwrap();
-        //this indicates to the user that they don't actually own the domain they are trying to
-        //start a server on
-        let socket = addrs.next().ok_or("resolution failed").unwrap();
-        let seen_hashes: VecDeque<String> = VecDeque::new();
-        let peers = Peers {
-            me: socket,
-            peers:vec!(),
-            potential_peers:hs,
-            peerno:peerno,
-            seen_hashes
-        };
-
-        return peers;
+        if let Some(me) = me {
+            //we need to figure out our own ip address, that way we don't later attempt to peer with
+            //ourselves.
+            println!("[peers] resolving own hostname: {}",&me);
+            let mut addrs = me.to_socket_addrs().unwrap();
+            //this indicates to the user that they don't actually own the domain they are trying to
+            //start a server on
+            let socket = addrs.next().ok_or("resolution failed").unwrap();
+            let seen_hashes: VecDeque<String> = VecDeque::new();
+            let peers = Peers {
+                me: Some(socket),
+                peers:vec!(),
+                potential_peers:hs,
+                peerno:peerno,
+                seen_hashes
+            };
+            return peers;
+        } else {
+            //TODO: Not actually used in client mode, fix
+            let seen_hashes: VecDeque<String> = VecDeque::new();
+            let peers = Peers {
+                me: None, 
+                peers:vec!(),
+                potential_peers:hs,
+                peerno:peerno,
+                seen_hashes
+            };
+            return peers;
+        }
     }
     pub fn check_seen_hash(&self, hash: &String) -> bool {
         for h in self.seen_hashes.iter() {
@@ -277,16 +320,15 @@ impl Peers {
     pub fn generate_peer(&mut self) -> Result<(),Box<dyn Error>> {
         //get the url from the potential_peers list
         let url:String = {
-            //TODO: Return error here instead of Ok
             if self.potential_peers.len() == 0 {
-                println!("[generate_peer] exhausted the potential_peers list");
-                return Ok(());
+                return Err("[generate_peer] exhausted the potential_peers list".into());
             } else {
                 let peer = self.potential_peers.iter().next().expect("there's at least 1 peer, but no next element").clone();
                 self.potential_peers.remove(&peer);
-                peer
+                peer+":8069"
             }
         };
+        println!("[peers] resolving {}",url);
         //perform dns resolution to get the IP address
         let addrs = url.to_socket_addrs();
         let mut socket = addrs?.next().ok_or("resolution failed")?;
@@ -295,7 +337,7 @@ impl Peers {
 
 
         //check that we don't try to peer to ourselves
-        if socket == self.me {
+        if Some(socket) == self.me {
             return Err(Box::<dyn Error + Send + Sync>::from("Not peering to self"));
         }
 
@@ -341,9 +383,11 @@ impl Peers {
         let mut count = 0;
         for _ in 0..self.peerno {
             let result = self.generate_peer();
-            if result.is_ok() {
+            if let Err(e) = result { 
+                println!("[peers] Generation failed: {}", e)
+            } else {
                 count+=1;
-            }
+            } 
         }
         return count;
     }
