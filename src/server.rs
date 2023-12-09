@@ -77,7 +77,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                 }
                 // TODO: if this is a whole chain, then we need to handle the
                 // fork case
-                let succ = db::fast_forward(upd.chain);
+                let succ = db::fast_forward(upd.chain, true);
                 if !succ {
                     panic!("Cannot add new entries :sadge:2");
                 }
@@ -147,7 +147,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
 
                             let ph = db::get_tip_hash().unwrap();
                             let new_ce = ChainEntry::new(ph,69420,time_now(),sign.into(),privkey,cr.clone());
-                            db::fast_forward(vec!(new_ce.clone()));
+                            db::fast_forward(vec!(new_ce.clone()), false);
                             let аллилуиа = Advert::mint_new_block(cr.src,&new_ce.hash);
                             let msg = аллилуиа.to_msg()?;
                             peers::broadcast(msg,0)?;

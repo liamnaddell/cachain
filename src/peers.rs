@@ -235,7 +235,14 @@ impl Peers {
             }
         };
 
-        let upd = Update {src: db::get_addr(), dest: data_src,start_hash: hash};
+        let start_hash = {
+            if hash == "".to_string() {
+                "".to_string()
+            } else {
+                db::get_tip_hash().unwrap_or("".to_string())
+            }
+        };
+        let upd = Update {src: db::get_addr(), dest: data_src, start_hash};
         let msg = upd.to_capnp().unwrap();
         let dest = self.unicast(msg,data_src);
         if let Some(peer) = dest {
@@ -245,17 +252,20 @@ impl Peers {
             let msg_reader = reader.get_root::<msg_capnp::update_response::Reader>()?;
             let upd = UpdateResponse::from_reader(msg_reader)?;
             println!("Received update_response from inside peers: {}",upd);
-            
-            // TODO: need more validation / verification
-            if !chain::is_valid_chain(
-                &upd.chain,
-                upd.start_hash != upd.chain[0].hash
-            ) { 
-                panic!("Received invalid update :sadge:1");
-            }
-            let succ = db::merge_compatible(upd.chain);
-            if !succ {
-                panic!("Cannot add new entries :sadge:2");
+
+            // TODO: consider other cases of conflict
+            // Check if the peers detected a conflict and sent their whole chain
+            // Exclude the case when we request using an empty hash
+            let is_conflict = upd.start_hash != upd.chain[0].hash
+                                    && upd.start_hash != "".to_string();
+        
+            if is_conflict {
+                println!("TODO: resolve the fork. Abort merging");
+            } else {
+                let succ = db::merge_compatible(upd.chain);
+                if !succ {
+                    panic!("Cannot add new entries :sadge:2");
+                }
             }
         } else {
             panic!("[peers] update_chain: no peer found for data_src {}",data_src);

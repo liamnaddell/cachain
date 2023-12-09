@@ -318,17 +318,17 @@ pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>, domain: &str) -> St
 
 }
 
-/*pub fn verify_signature(public: Rsa<Public>, data: String) -> bool {
-    let mut verifier = Verifier::new(MessageDigest::sha256(), &public).unwrap();
-    verifier.update(data).unwrap();
-    assert!(verifier.verify(&signature).unwrap());
-    return false;
-}*/
-
-use openssl::sign::Signer;
+use openssl::sign::{Signer, Verifier};
 use openssl::hash::MessageDigest;
 use openssl::x509::*;
 
+// Use a pubkey to verify the signature of the data signed with the corresponding private key
+pub fn verify_signature(public: &Rsa<Public>, data:&Vec<u8> , signature: &Vec<u8>) -> bool {
+    let public = PKey::from_rsa(public.clone()).unwrap();
+    let mut verifier = Verifier::new(MessageDigest::sha256(), &public).unwrap();
+    verifier.update(data.as_slice()).unwrap();
+    return verifier.verify(signature).unwrap_or(false);
+}
 
 //Signs data using a private rsa key, returns the raw signing data, which can't be trivially
 //converted to a string.

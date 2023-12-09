@@ -46,11 +46,66 @@ impl DB {
         fs::write("server_db.json",&serde_json::to_string(&ddb)?)?;
         return Ok(());
     }
+    /// Validate and verify `entry` using an entry on the local chain at `prev_pos`
+    /// `entry` is supposed to be the next entry after the entry at `prev_pos`
+    fn verify_entry(&self, entry: &ChainEntry, prev_pos: usize) -> bool {
+        let prev = &self.chain[prev_pos];
+        if !chain::validate_entry(entry, prev) {
+            println!("[db] chain entry {} failed validation", entry.hash);
+            return false;
+        }
+        // find the verifier of entry
+        let randint = prev.hash.as_bytes().iter().fold(0,|acc,y| acc+(*y as u64)) 
+            + entry.request.created_time;
+        let n = prev_pos + 1;
+        let mut verifier_pos: Option<usize> = None;
+        
+        // search verifier position
+        let f_n = n as f64;
+        let first_guy_tickets = 5.0;
+        // sum of f(1) to f(n-2) inclusively
+        let total_tickets = (first_guy_tickets*(f_n - 2.0)*(1.0 - (f_n - 1.0)/(2.0*f_n))).floor() as u64;
+        if total_tickets == 0 {
+            verifier_pos = Some(0);
+        } else {
+            let winner_ticket = randint % total_tickets;
+            let mut sum = 0.0;
+            for i in 1..n {
+                if (sum as u64) == winner_ticket {
+                    verifier_pos = Some(i);
+                    break;
+                }
+                let f_i = {
+                    let i = i as f64;
+                    let n = n as f64;
+                    first_guy_tickets * (n-i) / n
+                };
+                sum += f_i;
+            }
+        }
+        if verifier_pos.is_none() {
+            println!("[db] failed to find verifier for entry {}", entry.hash);
+            return false;
+        }
+        let verifier_pos = verifier_pos.unwrap();
+        
+        // check the signatures of entry using verifier details
+        let ce = &self.chain[verifier_pos];
+        let verifier_pubkey = &ce.request.requester_pubkey;
+        let rsa_pubkey = deserialize_pubkey(verifier_pubkey);
+
+        let data_string = ce.to_data_string();
+        if !verify_signature(&rsa_pubkey, &data_string, &ce.msg_signature) {
+            println!("[db] entry {} failed verification", entry.hash);
+            return false;
+        }
+        return true;
+    }
     ///Appends chain to our chain, returning false if the chains are incompatible
     ///Chains are incompatable when the prev_hash and previous node's hash do not match. 
-    ///A more complicated algorithm is required to be implemnented,
-    ///See functional requirements for more info.
-    pub fn fast_forward(&mut self, chain: Vec<ChainEntry>) -> bool {
+    ///If `verify` is true, perform verification on each new entry before adding it to the chain.
+    ///If verification fails, return false but still add preivous entries to the chain.
+    pub fn fast_forward(&mut self, chain: Vec<ChainEntry>, verify: bool) -> bool {
         if self.chain.len() == 0 {
             for b in chain.iter() {
                 self.add_block(b.clone());
@@ -58,11 +113,12 @@ impl DB {
             return true;
         }
         for new_head in chain.iter() {
-            let head = &self.chain[self.chain.len()-1];
-            if head.hash == new_head.prev_hash {
-                self.add_block(new_head.clone());
-            } else {
+            let head_pos = self.chain.len()-1;
+            if verify && !self.verify_entry(new_head, head_pos) {
                 return false;
+            }
+            else {
+                self.add_block(new_head.clone());
             }
         }
         return true;
@@ -81,7 +137,7 @@ impl DB {
     ///  A->B->C->D->E->F
     pub fn merge_compatible(&mut self, chain: Vec<ChainEntry>) -> bool {
         if self.chain.len() == 0 {
-            self.fast_forward(chain);
+            self.fast_forward(chain, false);
             return true;
         }
         let them = &chain[0].hash;
@@ -109,7 +165,7 @@ impl DB {
             usindex+=1;
             themindex+=1;
         }
-        self.fast_forward(chain[themindex..].to_vec())
+        self.fast_forward(chain[themindex..].to_vec(), true)
     }
 
     /// Return the tail of the chain starting from and including the
@@ -145,6 +201,15 @@ impl DB {
     fn to_disk_db(&self) -> DiskDB {
         let v = serialize_privkey(&self.pkey);
         return DiskDB { chain: self.chain.clone(), pkey:v,addr:self.addr};
+    }
+    
+    /// Returns the hash of the genesis block
+    pub fn get_genesis_hash(&self) -> Option<String> {
+        if self.chain.len() == 0 {
+            return None;
+        }
+        let head = &self.chain[0];
+        return Some(head.hash.clone());
     }
 }
 
@@ -306,6 +371,13 @@ pub fn get_tip_hash() -> Option<String> {
     return db.get_tip_hash();
 }
 
+///Returns the hash of the genesis block
+pub fn get_genesis_hash() -> Option<String> {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.get_genesis_hash();
+}
+
 
 //all the info one might need to know about a peer/non-peer
 pub struct NodeInfo {
@@ -425,10 +497,10 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
 
 /// Add ChainEntries to the blockchain, returning false if the incoming ChainEntries are
 /// incompatible with the existing chain.
-pub fn fast_forward(v: Vec<ChainEntry>) -> bool {
+pub fn fast_forward(v: Vec<ChainEntry>, verify: bool) -> bool {
     let mut guard = DB_I.lock().unwrap();
     let db = guard.deref_mut().as_mut().expect("should be initialized");
-    return db.fast_forward(v);
+    return db.fast_forward(v, verify);
 }
 pub fn merge_compatible(chain: Vec<ChainEntry>) -> bool {
     let mut guard = DB_I.lock().unwrap();
