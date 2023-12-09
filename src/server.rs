@@ -11,7 +11,7 @@ use std::net::TcpStream;
 use std::thread;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, Receiver};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio_rustls::TlsAcceptor;
 use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
@@ -19,7 +19,6 @@ use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::Big
 use tokio::runtime::Runtime;
 use clap::Parser;
 use std::time;
-
 
 fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn Error>> {
     loop {
@@ -143,7 +142,7 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                             //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
                             let privkey = db::get_key();
                             let pubkey = deserialize_pubkey(&cr.requester_pubkey);
-                            let sign = x509_sign(key,pubkey);
+                            let sign = x509_sign(key,pubkey,&cr.url);
 
 
                             let ph = db::get_tip_hash().unwrap();
@@ -221,29 +220,10 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     return Ok(());
 }
 
-async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Error> {
+async fn https_thread(rx: Receiver<String>,cert: Vec<u8>,_domain: String) -> Result<(),std::io::Error> {
     let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
-    //TODO: Replace w/ x509_sign function
-    let now = Asn1Time::from_unix(time_now() as i64).unwrap();
-    let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
-    let mut x509 = X509::builder()?;
-    x509.set_not_before(&now)?;
-    x509.set_not_after(&year_from_now)?;
-    x509.set_serial_number(&(BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap()))?;
-    let mut x509_name = X509NameBuilder::new()?;
-    x509_name.append_entry_by_text("C", "CA")?;
-    x509_name.append_entry_by_text("O", "cachain")?;
-    x509_name.append_entry_by_text("CN", "domain")?;
-    let x509_name = x509_name.build();
-    x509.set_issuer_name(&x509_name)?;
-    x509.set_subject_name(&x509_name)?;
-
-    // x509.set_issuer_name("cachain");
-    let x509_keyref = PKey::from_rsa(db::get_key())?;
-    x509.set_pubkey(&x509_keyref)?;
-    x509.sign(&x509_keyref, openssl::hash::MessageDigest::md5())?;
-
-    let x509 = CertificateDer::from(x509.build().to_der()?);
+    let x509 = X509::from_pem(&cert).unwrap();
+    let x509 = CertificateDer::from(x509.to_der()?);
     let mut x509_chain = Vec::new();
     x509_chain.push(x509);
     let config = rustls::ServerConfig::builder()
@@ -252,18 +232,24 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     .with_single_cert(x509_chain, key)
     .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
+
+        
+
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8443").await?;
-    let mut challenge_str;//= String::from("null");
+    let mut challenge_str= String::from("null");
     loop {
-        challenge_str = (c_chal_lock.read().unwrap()).clone();
+        let maybe_new_str=rx.try_recv();
+        if let Ok(cs) = maybe_new_str {
+            challenge_str=cs;
+        }
         let (stream, peer_addr) = listener.accept().await?;
         let acceptor = acceptor.clone();
+        let contents = challenge_str.clone();
         let fut = async move {
             let mut stream = acceptor.accept(stream).await?;
 
             let status_line = "HTTP/1.1 200 OK";
-            let contents = challenge_str.clone();
             let length = contents.len();
             let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
             stream.write_all(response.as_bytes()).await?;
@@ -280,22 +266,22 @@ async fn https_thread(c_chal_lock: Arc<RwLock<String>>) -> Result<(),std::io::Er
     }
 }
 
-fn setup_https_server_thread(_domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
-    //TODO: Use domain
-    let chal_lock = Arc::new(RwLock::new(String::from("none")));
-    let c_chal_lock = Arc::clone(&chal_lock);
-    thread::spawn(move || {
-        loop {
-            let new_chal = rx.recv().unwrap();
-            let mut chal_str = chal_lock.write().unwrap();
-            println!("{}", new_chal);
-            *chal_str = new_chal;
-        }
-    });
-
+fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
     let rt  = Runtime::new()?;
+    let demain = domain.to_string();
     thread::spawn(move || {
-        let res = rt.block_on(https_thread(c_chal_lock));
+        println!("[server] Attempting to spawn https server thread using our signature found in the chain");
+        let mut myces = db::find_by_domain(&demain);
+        while myces.len() == 0 {
+            println!("[server] failed to spawn https server, retrying in 10 seconds");
+            std::thread::sleep(time::Duration::from_secs(10));
+            myces = db::find_by_domain(&demain);
+        }
+        println!("[server] Spawning server!");
+        let myce = &myces[myces.len()-1];
+
+        let vsig = myce.verifier_signature.clone();
+        let res = rt.block_on(https_thread(rx,vsig,demain));
         if let Err(e) = res {
             println!("[https_thread] Error from block_on {}",e);
         }
@@ -329,19 +315,24 @@ fn main() -> Result<(),Box<dyn Error>> {
     };
 
 
+    //in_memory creates a new database if we pass a domain in
     if in_memory {
-        db::in_memory();
+        let m_domain = {
+            if peer.is_none() {
+                Some(domain.as_str())
+            } else {
+                None
+            }
+        };
+        db::in_memory(m_domain);
     } else {
-        db::load_db("server_db.json");
+        db::load_db("server_db.json",Some(&domain));
     }
     peers::init(Some(domain.clone()+":8069"),peer.clone(),peerno);
     let (tx, rx) = channel::<String>();
     setup_https_server_thread(&domain, rx)?;
     
-    if peer == None {
-        println!("Creating new genesis from {domain}");
-        db::generate_new_genesis(domain);
-    } else {
+    if peer != None {
         // Intial chain download
         println!("Intial chain downloading...");
         peers::initial_chain_download();
