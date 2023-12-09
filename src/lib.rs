@@ -291,7 +291,7 @@ pub mod msg_capnp {
 }
 
 
-pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>) -> String {
+pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>, domain: &str) -> String {
     //let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
     let now = Asn1Time::from_unix(time_now() as i64).unwrap();
     let year_from_now = Asn1Time::from_unix(time_now() as i64 + 31536000).unwrap();
@@ -302,7 +302,7 @@ pub fn x509_sign(private: Rsa<Private>, public: Rsa<Public>) -> String {
     let mut x509_name = X509NameBuilder::new().unwrap();
     x509_name.append_entry_by_text("C", "CA").unwrap();
     x509_name.append_entry_by_text("O", "cachain").unwrap();
-    x509_name.append_entry_by_text("CN", "domain").unwrap();
+    x509_name.append_entry_by_text("CN", domain).unwrap();
     let x509_name = x509_name.build();
     x509.set_issuer_name(&x509_name).unwrap();
     x509.set_subject_name(&x509_name).unwrap();

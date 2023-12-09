@@ -19,6 +19,7 @@ pub struct DB {
     pub addr: u64,
     //transmitter for updates to the blockchain
     tx: Option<Sender<ChainEntry>>,
+    in_memory: bool,
 
 }
 
@@ -28,13 +29,22 @@ impl DB {
     pub fn new() -> DB {
         let v = vec!();
         let pkey = generate();
-        return DB { chain: v, pkey: pkey, addr:random(), tx: None};
+        return DB { chain: v, pkey: pkey, addr:random(), tx: None, in_memory: true};
     }
     fn add_block(&mut self, ce: ChainEntry) {
         if let Some(tx) = &self.tx {
             let _ = tx.send(ce.clone());
         }
         self.chain.push(ce);
+        self.write_db().unwrap();
+    }
+    fn write_db(&self) -> Result<(),Box<dyn Error>> {
+        if db_in_memory() {
+            return Ok(());
+        }
+        let ddb = self.to_disk_db();
+        fs::write("server_db.json",&serde_json::to_string(&ddb)?)?;
+        return Ok(());
     }
     ///Appends chain to our chain, returning false if the chains are incompatible
     ///Chains are incompatable when the prev_hash and previous node's hash do not match. 
@@ -131,13 +141,17 @@ impl DB {
         self.tx=Some(tx);
         return rx;
     }
+
+    fn to_disk_db(&self) -> DiskDB {
+        let v = serialize_privkey(&self.pkey);
+        return DiskDB { chain: self.chain.clone(), pkey:v,addr:self.addr};
+    }
 }
 
 fn to_disk_db() -> DiskDB {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
-    let v = serialize_privkey(&db.pkey);
-    return DiskDB { chain: db.chain.clone(), pkey:v,addr:db.addr};
+    return db.to_disk_db();
 }
 
 fn from_disk_db(ddb: DiskDB) {
@@ -146,7 +160,8 @@ fn from_disk_db(ddb: DiskDB) {
     let rsa = pkey.rsa().unwrap();
     let mut guard = DB_I.lock().unwrap();
     let option_db = guard.deref_mut();
-    let db = DB { chain: ddb.chain, pkey: rsa,addr:ddb.addr, tx: None};
+    assert!(ddb.chain.len() > 0);
+    let db = DB { chain: ddb.chain, pkey: rsa,addr:ddb.addr, tx: None, in_memory: false};
     *option_db=Some(db);
 }
 
@@ -158,11 +173,13 @@ struct DiskDB {
     addr:u64,
 }
 
+
 ///cache commonly required data to avoid lock contention+deadlocks
 #[derive(Debug)]
 struct StaticInfo {
     pub key: Rsa<Private>,
     pub addr: u64,
+    pub in_memory: bool,
 }
 
 //static variable that can only be written to once. This code is used to store our private key and
@@ -172,25 +189,29 @@ static S_DATA: OnceLock<StaticInfo> = OnceLock::new();
 
 use std::path::Path;
 ///Loads database from file, otherwise creates a new database using DB::new()
-pub fn load_db(file: &str) {
+pub fn load_db(file: &str, url: Option<&str>) {
     if !Path::new(&file).exists() {
         println!("[db] creating a new db");
-        let db = DB::new();
+        let mut db = DB::new();
+        db.in_memory=false;
         let mut guard = DB_I.lock().unwrap();
         let option_db = guard.deref_mut();
         *option_db=Some(db);
         drop(guard);
-        let ddb = to_disk_db();
-        fs::write(file,&serde_json::to_string(&ddb).unwrap()).unwrap();
+        init_static_data();
+        if url != None {
+            generate_new_genesis(url.unwrap().to_string());
+            write_db().unwrap();
+        }
     } else {
         println!("[db] reading db from {}",file);
         let data = fs::read_to_string(file).unwrap();
         let ddb: DiskDB = serde_json::from_str(&data).unwrap();
         from_disk_db(ddb);
+        init_static_data();
     }
-    init_static_data();
 }
-pub fn in_memory() {
+pub fn in_memory(m_url: Option<&str>) {
     println!("[db] creating an in-memory database");
     let db = DB::new();
     let mut guard = DB_I.lock().unwrap();
@@ -198,6 +219,9 @@ pub fn in_memory() {
     *option_db=Some(db);
     drop(guard);
     init_static_data();
+    if let Some(url) = m_url {
+        generate_new_genesis(url.to_string());
+    }
 }
 
 //Initializes static data, called by load_db
@@ -207,6 +231,7 @@ fn init_static_data() {
     let data = StaticInfo {
         key:db.pkey.clone(),
         addr:db.addr,
+        in_memory:db.in_memory
     };
     S_DATA.set(data).unwrap();
 }
@@ -220,6 +245,20 @@ pub fn get_key() -> Rsa<Private> {
 pub fn get_addr() -> u64 {
     let sd = S_DATA.get().unwrap();
     return sd.addr;
+}
+
+pub fn db_in_memory() -> bool {
+    let sd = S_DATA.get().unwrap();
+    return sd.in_memory;
+}
+
+pub fn write_db() -> Result<(),Box<dyn Error>> {
+    if db_in_memory() {
+        return Ok(());
+    }
+    let ddb = to_disk_db();
+    fs::write("server_db.json",&serde_json::to_string(&ddb)?)?;
+    return Ok(());
 }
 
 pub fn get_chain() -> Vec<ChainEntry> {
@@ -241,7 +280,7 @@ pub fn find_hash(hash: &str) -> Option<ChainEntry> {
 }
 
 /// Find all chain entries with url field `domain`
-pub fn find_by_domain(domain: &String) -> Vec<ChainEntry> {
+pub fn find_by_domain(domain: &str) -> Vec<ChainEntry> {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     let mut v = vec!();
@@ -414,7 +453,7 @@ pub fn generate_new_genesis(url: String) {
 
     let our_pubkey = private_to_public(&db.pkey);
 
-    let sigin = x509_sign(verifier_key,our_pubkey);
+    let sigin = x509_sign(verifier_key,our_pubkey,&url);
 
 
     let cr = CertRequest::new(&url);

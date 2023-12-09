@@ -219,7 +219,7 @@ impl Peers {
         let mut ret = None;
         for peer in self.peers.iter_mut() {
             if peer.addr == dest {
-                peer.send_msg(&msg).unwrap();
+                let _ = peer.send_msg(&msg);
                 ret = Some(peer);
             }
         }
