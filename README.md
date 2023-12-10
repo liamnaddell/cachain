@@ -1,22 +1,11 @@
 Instructions for running inside mininet:
-* use commands like `h1 alacritty` to spawn terminals in the hosts
-* somehow we need to start a DNS server inside of mininet later to accomplish some BS
+* run ./run_mininet_scc.py to use the default topology
+* run xterms inside of each host to get a console
+* run ./server <domain> to start a server (-i for an in-memory database. WARNING: Two servers cannot be run in the same directory)
 * How to set up DNS: 
-    configure /etc/hosts to have a.com,b.com,c.com point to their addresses in mininet
-    start mininet
-
+    configure /etc/hosts to have a.com,b.com,c.com point to their addresses in mininet. 
 
 # Requirements
-
-## Not understood yet
-
-* Code Quality???
-* Ask marcelo
-* Do we need a design document?
-* How do we submit our code? How do we demo it?
-* Testing requirements???
-* How do we handle cut corners?
-* Re-certification?
 
 ## Code/Formatting requirements
 
@@ -36,3 +25,4 @@ Instructions for running inside mininet:
 
 ## Stretch Goals
 
+These goals are listed in the git issues
