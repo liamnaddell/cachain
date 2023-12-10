@@ -147,6 +147,15 @@ impl Challenge {
 
         return v;
     }
+    pub fn to_chal_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
+        let mut mb = Builder::new_default();
+        let mut ch = mb.init_root::<challenge::Builder>();
+        ch.set_src(self.src);
+        ch.set_dest(self.dest);
+        ch.set_challenge_string(TextReader::from(self.chal_str.as_str()));
+
+        return mb;
+    }
     /// Convert to a capnp builder
     pub fn to_builder(&self) -> capnp::message::Builder<capnp::message::HeapAllocator> {
         let mut mb = Builder::new_default();
