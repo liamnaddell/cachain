@@ -120,7 +120,7 @@ impl Advert {
                 kind_builder.set_ce(text::Reader::from(ce.as_str()));
             }
             AdvertKind::CH(ch) => {
-                let mut chal_builder = ch.to_builder();
+                let mut chal_builder = ch.to_chal_builder();
                 let ch_builder = chal_builder.get_root::<challenge::Builder>().unwrap();
                 kind_builder.set_ch(ch_builder.into_reader())?;
             }
@@ -158,6 +158,19 @@ impl Update {
         return Ok(v);
 
     }
+}
+
+
+use sha2::{Sha256, Digest};
+
+pub fn new_random_str() -> String {
+    let randdata = time_now();
+    let slice = [randdata as u8];
+    let mut hasher = Sha256::new();
+    hasher.update(slice);
+    let hash = hasher.finalize();
+    return format!("{:x}",hash);
+
 }
 
 ///Gets the current time

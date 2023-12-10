@@ -335,7 +335,11 @@ impl Peers {
             } else {
                 let peer = self.potential_peers.iter().next().expect("there's at least 1 peer, but no next element").clone();
                 self.potential_peers.remove(&peer);
-                peer+":8069"
+                if !peer.contains(":8069") {
+                    peer+":8069"
+                } else {
+                    peer
+                }
             }
         };
         println!("[peers] resolving {}",url);

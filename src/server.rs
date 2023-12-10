@@ -135,8 +135,9 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         println!("Received cert request: {:#?}",cr);
                         let ni = db::current_elector(&cr);
                         if ni.addr == db::get_addr() {
-                            // let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
-                            let chal = Challenge::new(cr.src,"not unicode wtf".to_string());
+                            //let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
+                            let chalstr = new_random_str();
+                            let chal = Challenge::new(cr.src,chalstr.to_string());
                             println!("Created challenge: {:?}",chal);
                             //TODO: mask person who sent us the cert request
                             peers::add_seen_hash(chal.get_hash());
@@ -154,6 +155,8 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                                                     break;
                                                 } else {
                                                     println!("Failed verify attempt - non-matching challenge string: {} != {}", response, chal.chal_str);
+
+                                                    peers::broadcast(chal.to_advert_msg(),0)?;
                                                 }
                                             }
                                             Err(e) => {
@@ -205,11 +208,11 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         }
 
                         // Check to see if the challenge is to us
+                        println!("Received challenge response: {:#?}", ch);
+                        let _ = tx.send(ch.chal_str.clone());
                         let our_dest = db::get_addr();
                         if ch.dest == our_dest || adv.dest == our_dest {
                             // handle challenge
-                            println!("Received challenge response: {:#?}", ch);
-                            tx.send(ch.chal_str.clone())?;
                         } else {
                             // forward challenge response to other peers
                             let blacklist = adv.src;
@@ -276,7 +279,6 @@ async fn https_thread(cert: Vec<u8>,_domain: String) -> Result<(),std::io::Error
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:443").await?;
-    let mut challenge_str= String::from("null");
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         let acceptor = acceptor.clone();
@@ -364,7 +366,7 @@ fn setup_challenge_server_thread(domain: &str, rx: Receiver<String>) -> Result<(
         println!("[challenge_server_thread] We are verified! Time to shut down.");
 
         // one final connection to our own challenge server to wake it up so it can exit gracefully
-        TcpStream::connect("127.0.0.1:8443");
+        let _ = TcpStream::connect("127.0.0.1:8443");
     });
 
     return Ok(());
@@ -413,7 +415,7 @@ fn main() -> Result<(),Box<dyn Error>> {
     // pipe for challenge strings
     let (tx, rx) = channel::<String>();
 
-    setup_challenge_server_thread(&domain, rx);
+    setup_challenge_server_thread(&domain, rx)?;
     setup_https_server_thread(&domain)?;
 
     if peer != None {
