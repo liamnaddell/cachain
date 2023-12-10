@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio_rustls::TlsAcceptor;
 use webpki::types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
-use openssl::{pkey::PKey, x509::{X509, X509NameBuilder}, asn1::Asn1Time, bn::BigNum};
+use openssl::x509::X509;
 use tokio::runtime::Runtime;
 use clap::Parser;
 use std::time;
@@ -339,11 +339,14 @@ fn main() -> Result<(),Box<dyn Error>> {
 
         //thread for verifying the server
         thread::spawn(move || {
-            let res = verifier_thread(domain);
-            if let Err(e) = res {
-                println!("Error in verifier thread: {e}");
-            } else {
-                println!("[verifier_thread]: exited succesfully");
+            loop {
+                let res = verifier_thread((&domain).to_string());
+                if let Err(e) = res {
+                    println!("Error in verifier thread: {e}");
+                } else {
+                    println!("[verifier_thread]: exited succesfully");
+                    break;
+                }
             }
         });
     }

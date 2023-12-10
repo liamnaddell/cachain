@@ -456,7 +456,7 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
     };
 
     //there's obviously a better way of doing this, I can't figure it out at the moment
-    let total_tickets = ((1..(n-1)).map(f).sum::<f64>()).floor() as u64;
+    let total_tickets = ((0..(n-1)).map(f).sum::<f64>()).floor() as u64;
     //a reasonable upper bound...
     assert!(total_tickets < (5*n) as u64);
 
@@ -464,26 +464,24 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
 
     //TODO: Find a better way if we have time, this algorithm should be O(1) instead its O(n),
     //where n is the length of the chain, which will only work for relatively short chains
-    let winner_ce_number = {
-        if total_tickets != 0 {
-            let winner_ticket = randint % total_tickets;
-            let mut sum = 0.0;
-            let mut res = None;
-            for i in 1..n {
-                if (sum as u64) == winner_ticket {
-                    res=Some(i);
-                    break;
-                }
-                sum+=f(i);
+    let mut res = None;
+    if total_tickets != 0 {
+        let winner_ticket = randint % total_tickets;
+        let mut sum = 0.0;
+        for i in 0..n-1 {
+            sum+=f(i);
+            let usum = sum as u64;
+            if usum >= winner_ticket {
+                res=Some(i);
+                break;
             }
-            res
-        } else {
-            //there's only 1 entry in the chain
-            Some(0)
         }
-    };
+    } else {
+        //there's only 1 entry in the chain
+        res=Some(0);
+    }
     //this computation should *literally* never fail
-    let winner_ce_number = winner_ce_number.unwrap();
+    let winner_ce_number = res.unwrap();
 
     //casting to a usize is safe here because the length of the chain will never be larger than a
     //32 bit integer, because there will never be 4 billion websites (i.e. more websites than ipv4 addresses)
