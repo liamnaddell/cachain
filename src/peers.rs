@@ -260,7 +260,23 @@ impl Peers {
                                     && upd.start_hash != "".to_string();
         
             if is_conflict {
-                println!("TODO: resolve the fork. Abort merging");
+                println!("Conflict detected, resolving fork");
+                if upd.chain.len() <= db::get_chain_length() {
+                    println!("Incoming chain is not longer, ignoring");
+                } else if !chain::is_valid_chain(&upd.chain, true) {
+                    println!("Incoming chain is invalid, ignoring");
+                } else {
+                    // last_common_index should not be None because the genesis should be the same,
+                    // which was checked in is_valid_chain()
+                    let last_common_index = db::last_common_index(&upd.chain).expect("last_common_index gave None");
+                    if !chain::verify_chain_after(&upd.chain, last_common_index) {
+                        println!("Incoming chain failed verification, ignoring");
+                    } else {
+                        // Replace entries after last_common_index in local chain with incoming chain
+                        let new_tail_ref = &upd.chain[last_common_index + 1..];
+                        db::replace(last_common_index, new_tail_ref);
+                    }
+                }
             } else {
                 let succ = db::merge_compatible(upd.chain);
                 if !succ {
