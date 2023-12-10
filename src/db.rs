@@ -38,111 +38,6 @@ impl DB {
         self.chain.push(ce);
         self.write_db().unwrap();
     }
-
-    /// Reads the chain to determine who is the verifer for an incoming ChainEntry.
-    /// We can consider the chain to be a probability space, and by choosing a random* (see note below)
-    /// number, we can pick an entry from the chain, who will become the verifer.
-    /// We also want to bias the number towards senority, so we will pick a linear distribution, with 
-    /// $\sum^\infty_0 p(x)dx=1$ as is expected for any discrete/continuous distribution, where p(x) is
-    /// the probability any individual chainentry is picked
-    /// The way we bias towards senority is as follows:
-    /// Consider a chain with n entries, we chose that the root of che chain will be R times as likely to
-    /// become the verifier than it would under a uniform distribution.
-    /// We then choose that the tip of the chain has a 0% probability of becoming the verifier.
-    /// We then linearly interpolate the relative probability that each node becomes the verifier.
-    /// To make this discrete, let node 1 get 5 tickets, node 2 get 4, node 3 gets 3, node 2 gets 2,
-    /// and node 1 gets 1. then, we take our random number, modulo it by 5+4+3+2+1=15, to get our
-    /// answer.
-    /// ----------------------------------
-    ///           5 \
-    /// # of tick 3  -------\
-    ///  ets      1          --------\
-    ///             N1      N2       N3 
-    ///                 node number
-    ///----------------------------------
-    ///
-    /// We then sum the tickets, then use the random number modulo sum as our answer (this excludes the
-    /// tip of the chain!)
-    ///
-    ///
-    /// * about those random numbers.
-    /// Everybody needs to agree on who the verifier is, that way elections work properly.
-    /// However, we also must acommodate that some verifiers won't do their job, so different cert
-    /// requests should get different verifiers. As such, some unique property of the current state of
-    /// the chain, + the current CertRequest should uniquely determine the verifier. 
-    /// We will use the time the CertRequest was created, plus, the bytes of the current tip of the
-    /// chain, to determine who the verifier is. 
-    /// A note on the weakness of the protocol:
-    /// by allowing the requester to influence who verifies them, we open ourselves up to collusion
-    /// between nodes, which is the worst case protocol scenario. Ideally, we would be able to avoid
-    /// this, however, this protocol is a proof-of-concept, not the final iteration.
-    /// This deficiency could be fixed either by changing the election function, or by introducing
-    /// multiple verifiers. Introducing multiple verifiers would make it nearly-impossible to collude,
-    /// even if you are able to bias selection by choosing a specific time to issue the CertRequest.
-    pub fn elector_at(&self, cr: &CertRequest, pos:usize) -> NodeInfo {
-        //shouldn't call current_elector on an empty chain (doy)
-        assert!(self.chain.len() != 0);
-
-
-        let randint: u64 = self.get_elector_seed(cr,pos);
-        let n = pos+1;
-
-        //the number of tickets node 1 gets
-        let first_guy_tickets=5.0;
-
-        //node numbers go from 1 (root of chain) to n (tip)
-        //this closure is the number of tickets a node gets
-        let f = |x: usize| -> f64 {
-            let x = x as f64;
-            let n = n as f64;
-            let factor = {
-                if x != n {
-                    n/(n-x)
-                } else {
-                    //this case shouldn't happen
-                    1.0
-                }
-            };
-            first_guy_tickets/factor
-        };
-
-        //there's obviously a better way of doing this, I can't figure it out at the moment
-        let total_tickets = ((0..(n-1)).map(f).sum::<f64>()).floor() as u64;
-        //a reasonable upper bound...
-        assert!(total_tickets < (5*n) as u64);
-
-        //I'm aware this isn't an even distribution, this modulo biases towards senority
-
-        //TODO: Find a better way if we have time, this algorithm should be O(1) instead its O(n),
-        //where n is the length of the chain, which will only work for relatively short chains
-        let mut res = None;
-        if total_tickets != 0 {
-            let winner_ticket = randint % total_tickets;
-            let mut sum = 0.0;
-            for i in 0..n-1 {
-                sum+=f(i);
-                let usum = sum as u64;
-                if usum >= winner_ticket {
-                    res=Some(i);
-                    break;
-                }
-            }
-        } else {
-            //there's only 1 entry in the chain
-            res=Some(0);
-        }
-        //this computation should *literally* never fail
-        let winner_ce_number = res.unwrap();
-
-        //casting to a usize is safe here because the length of the chain will never be larger than a
-        //32 bit integer, because there will never be 4 billion websites (i.e. more websites than ipv4 addresses)
-        //plus there will likely be no more than 100 of these on our chain if we really go ham on testing.
-        let entryno = winner_ce_number as usize;
-        let entry = &self.chain[entryno];
-        let req = &entry.request;
-        let ni = NodeInfo {url:req.url.clone(),key:deserialize_pubkey(&req.requester_pubkey),addr:req.src};
-        return ni;
-    }
     fn write_db(&self) -> Result<(),Box<dyn Error>> {
         if db_in_memory() {
             return Ok(());
@@ -150,25 +45,6 @@ impl DB {
         let ddb = self.to_disk_db();
         fs::write("server_db.json",&serde_json::to_string(&ddb)?)?;
         return Ok(());
-    }
-    /// Validate and verify `entry` using an entry on the local chain at `prev_pos`
-    /// `entry` is supposed to be the next entry after the entry at `prev_pos`
-    fn verify_entry(&self, entry: &ChainEntry, prev_pos: usize) -> bool {
-        let prev = &self.chain[prev_pos];
-        if !chain::validate_entry(entry, prev) {
-            println!("[db] chain entry {} failed validation", entry.hash);
-            return false;
-        }
-        // find the verifier of entry
-        let ni = self.elector_at(&entry.request,prev_pos);
-        // check the signatures of entry using verifier details
-        let rsa_pubkey = &ni.key;
-        let data_string = entry.to_data_string();
-        if !verify_signature(&rsa_pubkey, &data_string, &entry.msg_signature) {
-            println!("[db] entry {} failed verification", entry.hash);
-            return false;
-        }
-        return true;
     }
     ///Appends chain to our chain, returning false if the chains are incompatible
     ///Chains are incompatable when the prev_hash and previous node's hash do not match. 
@@ -183,7 +59,7 @@ impl DB {
         }
         for new_head in chain.iter() {
             let head_pos = self.chain.len()-1;
-            if verify && !self.verify_entry(new_head, head_pos) {
+            if verify && !chain::verify_entry(&self.chain, new_head, head_pos) {
                 return false;
             }
             else {
@@ -279,6 +155,35 @@ impl DB {
         }
         let head = &self.chain[0];
         return Some(head.hash.clone());
+    }
+
+    /// Compare the local chain to a remote chain, and return the last common index.
+    pub fn last_common_index(&self, remote: &Vec<ChainEntry>) -> Option<usize> {
+        for (i, entry) in remote.iter().enumerate() {
+            if i >= self.chain.len() {
+                return Some(i-1);
+            }
+            if entry.hash != self.chain[i].hash {
+                if i == 0 {
+                    return None;
+                } else {
+                    return Some(i-1);
+                }
+            }
+        }
+        return Some(remote.len()-1);
+    }
+
+    /// Replace entries after position `after` with `new_entries`.
+    /// If `after` is not in the chain, do nothing.
+    pub fn replace(&mut self, after: usize, new_entries: &[ChainEntry]) {
+        if after >= self.chain.len() {
+            return;
+        }
+        self.chain.truncate(after + 1);
+        for entry in new_entries {
+            self.chain.push(entry.clone());
+        }
     }
 }
 
@@ -447,6 +352,27 @@ pub fn get_genesis_hash() -> Option<String> {
     return db.get_genesis_hash();
 }
 
+/// Return the length of the local chain
+pub fn get_chain_length() -> usize {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.chain.len();
+}
+
+/// Return the last common index between the local chain and a remote chain
+pub fn last_common_index(remote: &Vec<ChainEntry>) -> Option<usize> {
+    let guard = DB_I.lock().unwrap();
+    let db = guard.deref().as_ref().expect("should be initialized");
+    return db.last_common_index(remote);
+}
+
+/// Replace entries after position `after` with `new_entries`.
+/// If `after` is not in the chain, do nothing.
+pub fn replace(after: usize, new_entries: &[ChainEntry]) {
+    let mut guard = DB_I.lock().unwrap();
+    let db = guard.deref_mut().as_mut().expect("should be initialized");
+    db.replace(after, new_entries);
+}
 
 //all the info one might need to know about a peer/non-peer
 pub struct NodeInfo {
@@ -459,7 +385,7 @@ pub fn current_elector(cr: &CertRequest) -> NodeInfo {
     let guard = DB_I.lock().unwrap();
     let db = guard.deref().as_ref().expect("should be initialized");
     assert!(db.chain.len() != 0);
-    return db.elector_at(cr,db.chain.len()-1);
+    return chain::elector_at(&db.chain, cr,db.chain.len()-1);
 }
 
 /// Add ChainEntries to the blockchain, returning false if the incoming ChainEntries are
