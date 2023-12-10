@@ -4,7 +4,8 @@ use cachain::peers::Peer;
 use std::net::{SocketAddr, TcpListener};
 use std::io::Write;
 use capnp::serialize;
-use std::io;
+use std::fs;
+use std::{io, io::Read};
 use std::error::Error;
 use crate::msg_capnp::msg::contents;
 use std::net::TcpStream;
@@ -134,26 +135,58 @@ fn handle_conn(mut stream: TcpStream, tx: Sender<String>) -> Result<(),Box<dyn E
                         println!("Received cert request: {:#?}",cr);
                         let ni = db::current_elector(&cr);
                         if ni.addr == db::get_addr() {
-                            let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
+                            // let chal = Challenge::new(cr.src,"この気持ちはまだそっとしまっておきたい".to_string());
+                            let chal = Challenge::new(cr.src,"not unicode wtf".to_string());
                             println!("Created challenge: {:?}",chal);
                             //TODO: mask person who sent us the cert request
                             peers::add_seen_hash(chal.get_hash());
                             peers::broadcast(chal.to_advert_msg(),0)?;
-                            //TODO: GEORGE FIX ME, ACTUALLY VERIFY CHALLENGE HERE
-                            let privkey = db::get_key();
-                            let pubkey = deserialize_pubkey(&cr.requester_pubkey);
-                            let sign = x509_sign(key,pubkey,&cr.url);
+
+                            let mut attempts_remaining = 10;
+                            while attempts_remaining > 0 {
+                                match TcpStream::connect(format!("{}:8443", cr.url)) {
+                                    Ok(mut stream) => {
+                                        let mut response = String::new();
+                                        match stream.read_to_string(&mut response) {
+                                            Ok(_) => {
+                                                if response == chal.chal_str {
+                                                    println!("Successful verification: {:#?}", cr);
+                                                    break;
+                                                } else {
+                                                    println!("Failed verify attempt - non-matching challenge string: {} != {}", response, chal.chal_str);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("Failed verify attempt - read error: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("Failed verify attempt - connect error: {}", e);
+                                    }
+                                }
+                                attempts_remaining -= 1;
+                                thread::sleep(time::Duration::from_secs(6));
+                            }
+
+                            if attempts_remaining > 0 {
+                                let privkey = db::get_key();
+                                let pubkey = deserialize_pubkey(&cr.requester_pubkey);
+                                let sign = x509_sign(key,pubkey,&cr.url);
 
 
-                            let ph = db::get_tip_hash().unwrap();
-                            let new_ce = ChainEntry::new(ph,69420,time_now(),sign.into(),privkey,cr.clone());
-                            db::fast_forward(vec!(new_ce.clone()), false);
-                            let аллилуиа = Advert::mint_new_block(cr.src,&new_ce.hash);
-                            let msg = аллилуиа.to_msg()?;
-                            peers::broadcast(msg,0)?;
+                                let ph = db::get_tip_hash().unwrap();
+                                let new_ce = ChainEntry::new(ph,69420,time_now(),sign.into(),privkey,cr.clone());
+                                db::fast_forward(vec!(new_ce.clone()), false);
+                                let аллилуиа = Advert::mint_new_block(cr.src,&new_ce.hash);
+                                let msg = аллилуиа.to_msg()?;
+                                peers::broadcast(msg,0)?;
+                            } else {
+                                println!("Failed to verify challenge for {} after 10 attempts", cr.url);
+                            }
                         }
 
-                        // forward cert request to other peers
+                        // forward cert request to other peers - should we still do this if we are the verifier?
                         let blacklist = adv.src;
                         adv.src = db::get_addr();
                         let forwarding_msg = adv.to_msg()?;
@@ -220,7 +253,15 @@ fn verifier_thread(domain: String) -> Result<(),Box<dyn Error>> {
     return Ok(());
 }
 
-async fn https_thread(rx: Receiver<String>,cert: Vec<u8>,_domain: String) -> Result<(),std::io::Error> {
+async fn https_thread(cert: Vec<u8>,_domain: String) -> Result<(),std::io::Error> {
+    // wait until we are verified to start https server
+    loop {
+        let ces: Vec<ChainEntry> = db::find_by_domain(&_domain);
+        if ces.len() != 0 {
+            break;
+        }
+        thread::sleep(time::Duration::from_secs(2));
+    }
     let key = PrivateKeyDer::from(PrivatePkcs1KeyDer::from(db::get_key().private_key_to_der().unwrap()));
     let x509 = X509::from_pem(&cert).unwrap();
     let x509 = CertificateDer::from(x509.to_der()?);
@@ -231,21 +272,15 @@ async fn https_thread(rx: Receiver<String>,cert: Vec<u8>,_domain: String) -> Res
     .with_no_client_auth()
     .with_single_cert(x509_chain, key)
     .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-
-
         
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8443").await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:443").await?;
     let mut challenge_str= String::from("null");
     loop {
-        let maybe_new_str=rx.try_recv();
-        if let Ok(cs) = maybe_new_str {
-            challenge_str=cs;
-        }
         let (stream, peer_addr) = listener.accept().await?;
         let acceptor = acceptor.clone();
-        let contents = challenge_str.clone();
+        let contents = fs::read_to_string("index.html").unwrap();
         let fut = async move {
             let mut stream = acceptor.accept(stream).await?;
 
@@ -266,7 +301,7 @@ async fn https_thread(rx: Receiver<String>,cert: Vec<u8>,_domain: String) -> Res
     }
 }
 
-fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+fn setup_https_server_thread(domain: &str) -> Result<(),Box<dyn Error>> {
     let rt  = Runtime::new()?;
     let demain = domain.to_string();
     thread::spawn(move || {
@@ -277,15 +312,61 @@ fn setup_https_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Bo
             std::thread::sleep(time::Duration::from_secs(10));
             myces = db::find_by_domain(&demain);
         }
-        println!("[server] Spawning server!");
+        println!("[server] Spawning HTTPS server!");
         let myce = &myces[myces.len()-1];
 
         let vsig = myce.verifier_signature.clone();
-        let res = rt.block_on(https_thread(rx,vsig,demain));
+        let res = rt.block_on(https_thread(vsig,demain));
         if let Err(e) = res {
             println!("[https_thread] Error from block_on {}",e);
         }
     });
+    return Ok(());
+}
+
+async fn challenge_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+    let mut challenge_str = String::from("none");
+    let listener = TcpListener::bind("0.0.0.0:8443".parse::<SocketAddr>().unwrap()).unwrap();
+    for sstream in listener.incoming() {
+        let mut stream = sstream?;
+        println!("Received challenge server connection");
+        let maybe_new_str=rx.try_recv();
+        if let Ok(cs) = maybe_new_str {
+            challenge_str=cs;
+        }
+
+        stream.write(challenge_str.as_bytes())?;
+
+        // stop listening once we are verified
+        if db::find_by_domain(domain).len() > 0 {
+            println!("[challenge_server_thread] Closing server...");
+            break;
+        }
+    }
+    return Ok(());
+}
+
+fn setup_challenge_server_thread(domain: &str, rx: Receiver<String>) -> Result<(),Box<dyn Error>> {
+    let rt = Runtime::new()?;
+    let demain = domain.to_string();
+    thread::spawn(move || {
+        println!("[server] Spawning challenge server!");
+        let res = rt.block_on(challenge_server_thread(&demain.clone(), rx));
+        if let Err(e) = res {
+            println!("[challenge_server_thread] Error from block_on {}", e);
+        }
+    });
+    let demain = domain.to_string();
+    thread::spawn(move || {
+        while db::find_by_domain(&demain).len() == 0 {
+            thread::sleep(time::Duration::from_secs(10));
+        }
+        println!("[challenge_server_thread] We are verified! Time to shut down.");
+
+        // one final connection to our own challenge server to wake it up so it can exit gracefully
+        TcpStream::connect("127.0.0.1:8443");
+    });
+
     return Ok(());
 }
 
@@ -314,7 +395,6 @@ fn main() -> Result<(),Box<dyn Error>> {
         }
     };
 
-
     //in_memory creates a new database if we pass a domain in
     if in_memory {
         let m_domain = {
@@ -329,9 +409,13 @@ fn main() -> Result<(),Box<dyn Error>> {
         db::load_db("server_db.json",Some(&domain));
     }
     peers::init(Some(domain.clone()+":8069"),peer.clone(),peerno);
+
+    // pipe for challenge strings
     let (tx, rx) = channel::<String>();
-    setup_https_server_thread(&domain, rx)?;
-    
+
+    setup_challenge_server_thread(&domain, rx);
+    setup_https_server_thread(&domain)?;
+
     if peer != None {
         // Intial chain download
         println!("Intial chain downloading...");
